@@ -1,0 +1,293 @@
+"""
+Record lifecycle management for SCD processing.
+"""
+
+from typing import Dict, Any
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.functions import col, current_timestamp, lit
+from delta.tables import DeltaTable
+import logging
+import time
+
+from ..common.config import SCDConfig, ProcessingMetrics
+from ..common.exceptions import SCDProcessingError
+
+logger = logging.getLogger(__name__)
+
+
+class RecordManager:
+    """Manages record lifecycle operations for SCD processing."""
+    
+    def __init__(self, config: SCDConfig, spark: SparkSession):
+        """
+        Initialize RecordManager with configuration and Spark session.
+        
+        Args:
+            config: SCD configuration
+            spark: Spark session
+        """
+        self.config = config
+        self.spark = spark
+        self.delta_table = DeltaTable.forName(spark, config.target_table)
+    
+    def get_current_records(self) -> DataFrame:
+        """
+        Get current records from target table.
+        
+        Returns:
+            DataFrame with current records only
+        """
+        current_records = self.spark.sql(f"""
+            SELECT * FROM {self.config.target_table}
+            WHERE {self.config.is_current_column} = 'Y'
+        """)
+        
+        logger.info(f"Retrieved {current_records.count()} current records from {self.config.target_table}")
+        return current_records
+    
+    def create_change_plan(self, source_df: DataFrame, current_df: DataFrame) -> Dict[str, DataFrame]:
+        """
+        Create processing plan based on detected changes.
+        
+        Args:
+            source_df: Source DataFrame with new data
+            current_df: Current records from target table
+            
+        Returns:
+            Dictionary with categorized DataFrames
+        """
+        # Join source with current records
+        joined_df = source_df.alias("source").join(
+            current_df.alias("current"),
+            self.config.business_key_columns,
+            "full_outer"
+        )
+        
+        # Categorize records
+        new_records = joined_df.filter(col("current.business_key").isNull())
+        unchanged_records = joined_df.filter(
+            col(f"source.{self.config.scd_hash_column}") == col(f"current.{self.config.scd_hash_column}")
+        )
+        changed_records = joined_df.filter(
+            col(f"source.{self.config.scd_hash_column}") != col(f"current.{self.config.scd_hash_column}")
+        )
+        
+        change_plan = {
+            "new_records": new_records,
+            "unchanged_records": unchanged_records,
+            "changed_records": changed_records
+        }
+        
+        logger.info(f"Change plan created: {len(new_records)} new, {len(unchanged_records)} unchanged, {len(changed_records)} changed")
+        return change_plan
+    
+    def execute_change_plan(self, change_plan: Dict[str, DataFrame]) -> ProcessingMetrics:
+        """
+        Execute the complete change plan.
+        
+        Args:
+            change_plan: Dictionary with categorized DataFrames
+            
+        Returns:
+            ProcessingMetrics with execution results
+        """
+        start_time = time.time()
+        metrics = ProcessingMetrics()
+        
+        try:
+            # Process new records
+            new_count = self._insert_new_records(change_plan["new_records"])
+            metrics.new_records_created = new_count
+            
+            # Process changed records
+            updated_count = self._process_changed_records(change_plan["changed_records"])
+            metrics.existing_records_updated = updated_count
+            
+            # Process unchanged records (update if needed)
+            unchanged_count = self._process_unchanged_records(change_plan["unchanged_records"])
+            metrics.existing_records_updated += unchanged_count
+            
+            metrics.records_processed = new_count + updated_count + unchanged_count
+            metrics.processing_time_seconds = time.time() - start_time
+            
+            logger.info(f"Change plan executed successfully. Metrics: {metrics.to_dict()}")
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error executing change plan: {str(e)}")
+            raise SCDProcessingError(f"Failed to execute change plan: {str(e)}")
+    
+    def _insert_new_records(self, new_records_df: DataFrame) -> int:
+        """
+        Insert new records into target table.
+        
+        Args:
+            new_records_df: DataFrame with new records
+            
+        Returns:
+            Number of records inserted
+        """
+        if new_records_df.isEmpty():
+            return 0
+        
+        # Prepare new records for insertion
+        insert_df = new_records_df.select("source.*")
+        
+        # Insert new records
+        (self.delta_table.alias("target")
+         .merge(insert_df.alias("source"), 
+                self._build_merge_condition("source", "target"))
+         .whenNotMatchedInsertAll()
+         .execute())
+        
+        record_count = insert_df.count()
+        logger.info(f"Inserted {record_count} new records")
+        return record_count
+    
+    def _process_changed_records(self, changed_records_df: DataFrame) -> int:
+        """
+        Process changed records (expire old, insert new).
+        
+        Args:
+            changed_records_df: DataFrame with changed records
+            
+        Returns:
+            Number of records processed
+        """
+        if changed_records_df.isEmpty():
+            return 0
+        
+        # First, expire existing records
+        self._expire_existing_records(changed_records_df)
+        
+        # Then, insert new versions
+        self._insert_new_versions(changed_records_df)
+        
+        record_count = changed_records_df.count()
+        logger.info(f"Processed {record_count} changed records")
+        return record_count
+    
+    def _process_unchanged_records(self, unchanged_records_df: DataFrame) -> int:
+        """
+        Process unchanged records (update if needed).
+        
+        Args:
+            unchanged_records_df: DataFrame with unchanged records
+            
+        Returns:
+            Number of records updated
+        """
+        if unchanged_records_df.isEmpty():
+            return 0
+        
+        # For unchanged records, we might still need to update audit timestamps
+        # This is a placeholder for any update logic needed for unchanged records
+        record_count = unchanged_records_df.count()
+        logger.info(f"Processed {record_count} unchanged records")
+        return record_count
+    
+    def _expire_existing_records(self, changed_records_df: DataFrame) -> None:
+        """
+        Expire existing records by setting end date and is_current = 'N'.
+        
+        Args:
+            changed_records_df: DataFrame with changed records
+        """
+        expire_condition = " AND ".join([
+            f"target.{col} = source.{col}" 
+            for col in self.config.business_key_columns
+        ]) + f" AND target.{self.config.is_current_column} = 'Y'"
+        
+        (self.delta_table.alias("target")
+         .merge(changed_records_df.alias("source"), expire_condition)
+         .whenMatchedUpdate(set={
+             self.config.effective_end_column: col(f"source.{self.config.effective_start_column}"),
+             self.config.is_current_column: lit("N"),
+             self.config.modified_ts_column: current_timestamp()
+         })
+         .execute())
+        
+        logger.info("Expired existing records for changed records")
+    
+    def _insert_new_versions(self, changed_records_df: DataFrame) -> None:
+        """
+        Insert new versions of changed records.
+        
+        Args:
+            changed_records_df: DataFrame with changed records
+        """
+        new_versions_df = changed_records_df.select("source.*")
+        
+        (self.delta_table.alias("target")
+         .merge(new_versions_df.alias("source"), 
+                self._build_merge_condition("source", "target"))
+         .whenNotMatchedInsertAll()
+         .execute())
+        
+        logger.info("Inserted new versions for changed records")
+    
+    def _build_merge_condition(self, source_alias: str, target_alias: str) -> str:
+        """
+        Build merge condition for business keys.
+        
+        Args:
+            source_alias: Source table alias
+            target_alias: Target table alias
+            
+        Returns:
+            Merge condition string
+        """
+        return " AND ".join([
+            f"{target_alias}.{col} = {source_alias}.{col}" 
+            for col in self.config.business_key_columns
+        ])
+    
+    def optimize_table(self) -> None:
+        """
+        Optimize the target table for better performance.
+        """
+        try:
+            # Z-order optimization
+            zorder_columns = (self.config.business_key_columns + 
+                            [self.config.effective_start_column])
+            
+            self.spark.sql(f"""
+                OPTIMIZE {self.config.target_table}
+                ZORDER BY ({', '.join(zorder_columns)})
+            """)
+            
+            logger.info(f"Optimized table {self.config.target_table} with ZORDER")
+            
+        except Exception as e:
+            logger.warning(f"Failed to optimize table: {str(e)}")
+    
+    def get_table_info(self) -> Dict[str, Any]:
+        """
+        Get information about the target table.
+        
+        Returns:
+            Dictionary with table information
+        """
+        try:
+            # Get table statistics
+            table_info = self.spark.sql(f"DESCRIBE EXTENDED {self.config.target_table}").collect()
+            
+            # Get record count
+            record_count = self.spark.sql(f"SELECT COUNT(*) as count FROM {self.config.target_table}").collect()[0]["count"]
+            
+            # Get current record count
+            current_count = self.spark.sql(f"""
+                SELECT COUNT(*) as count FROM {self.config.target_table}
+                WHERE {self.config.is_current_column} = 'Y'
+            """).collect()[0]["count"]
+            
+            return {
+                "table_name": self.config.target_table,
+                "total_records": record_count,
+                "current_records": current_count,
+                "historical_records": record_count - current_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get table info: {str(e)}")
+            return {"error": str(e)}
