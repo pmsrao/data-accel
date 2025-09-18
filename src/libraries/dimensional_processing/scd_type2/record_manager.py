@@ -308,9 +308,10 @@ class RecordManager:
         for bk_col in self.config.business_key_columns:
             source_columns.append(col(f"source.{bk_col}").alias(bk_col))
         
-        # Add SCD columns
+        # Add SCD columns (excluding any that are already in business key columns)
         for scd_col in self.config.scd_columns:
-            source_columns.append(col(f"source.{scd_col}").alias(scd_col))
+            if scd_col not in self.config.business_key_columns:
+                source_columns.append(col(f"source.{scd_col}").alias(scd_col))
         
         # Add SCD metadata columns
         source_columns.extend([
@@ -351,9 +352,10 @@ class RecordManager:
             for bk_col in self.config.business_key_columns:
                 schema_fields.append(StructField(bk_col, StringType(), True))
             
-            # Add SCD columns
+            # Add SCD columns (excluding any that are already in business key columns)
             for scd_col in self.config.scd_columns:
-                schema_fields.append(StructField(scd_col, StringType(), True))
+                if scd_col not in self.config.business_key_columns:
+                    schema_fields.append(StructField(scd_col, StringType(), True))
             
             # Add SCD metadata columns
             schema_fields.extend([
@@ -380,9 +382,10 @@ class RecordManager:
         for bk_col in self.config.business_key_columns:
             clean_columns.append(col(f"{alias_prefix}.{bk_col}").alias(bk_col))
         
-        # Add SCD columns
+        # Add SCD columns (excluding any that are already in business key columns)
         for scd_col in self.config.scd_columns:
-            clean_columns.append(col(f"{alias_prefix}.{scd_col}").alias(scd_col))
+            if scd_col not in self.config.business_key_columns:
+                clean_columns.append(col(f"{alias_prefix}.{scd_col}").alias(scd_col))
         
         # Add SCD metadata columns
         clean_columns.extend([

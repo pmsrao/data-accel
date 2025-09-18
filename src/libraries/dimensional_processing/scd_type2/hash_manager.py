@@ -39,7 +39,9 @@ class HashManager:
         Returns:
             DataFrame with SCD hash column added
         """
-        hash_columns = [col(c) for c in self.config.scd_columns]
+        # Get unique SCD columns (remove duplicates if business keys are also in SCD columns)
+        unique_scd_columns = list(dict.fromkeys(self.config.scd_columns))  # Preserves order, removes duplicates
+        hash_columns = [col(c) for c in unique_scd_columns]
         
         if self.hash_algorithm == "sha256":
             hash_expr = sha2(concat_ws("|", *hash_columns), 256)
@@ -50,7 +52,7 @@ class HashManager:
         
         result_df = df.withColumn(self.config.scd_hash_column, hash_expr)
         
-        logger.info(f"Computed {self.hash_algorithm} hash for {len(self.config.scd_columns)} SCD columns")
+        logger.info(f"Computed {self.hash_algorithm} hash for {len(unique_scd_columns)} unique SCD columns")
         return result_df
     
     def compute_business_key_hash(self, df: DataFrame) -> DataFrame:
@@ -95,9 +97,9 @@ class HashManager:
         Get list of columns used for hash computation.
         
         Returns:
-            List of column names
+            List of unique column names
         """
-        return self.config.scd_columns.copy()
+        return list(dict.fromkeys(self.config.scd_columns))  # Preserves order, removes duplicates
     
     def get_business_key_columns(self) -> List[str]:
         """

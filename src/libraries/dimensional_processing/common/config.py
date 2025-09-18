@@ -42,6 +42,10 @@ class SCDConfig:
     enable_optimization: bool = True
     hash_algorithm: str = "sha256"
     
+    # Deduplication settings
+    enable_source_deduplication: bool = True
+    deduplication_strategy: str = "latest"  # "latest", "earliest", "error"
+    
     # Error handling
     error_flag_column: str = "_error_flag"
     error_message_column: str = "_error_message"
@@ -56,6 +60,16 @@ class SCDConfig:
             raise ValueError("scd_columns cannot be empty")
         if self.batch_size <= 0:
             raise ValueError("batch_size must be positive")
+        
+        # Check for overlapping columns between business keys and SCD columns
+        overlapping_columns = set(self.business_key_columns) & set(self.scd_columns)
+        if overlapping_columns:
+            import warnings
+            warnings.warn(
+                f"Business key columns {list(overlapping_columns)} are also included in SCD columns. "
+                f"This is allowed but the columns will only be included once in the SCD hash computation.",
+                UserWarning
+            )
 
 
 @dataclass

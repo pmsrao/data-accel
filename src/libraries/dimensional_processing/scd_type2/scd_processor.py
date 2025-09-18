@@ -106,8 +106,11 @@ class SCDProcessor:
         """
         logger.info("Preparing source data with SCD metadata")
         
+        # Step 0: Deduplicate source data to prevent merge conflicts
+        deduplicated_df = self._deduplicate_source_data(source_df)
+        
         # Step 1: Compute SCD hash
-        df_with_hash = self.hash_manager.compute_scd_hash(source_df)
+        df_with_hash = self.hash_manager.compute_scd_hash(deduplicated_df)
         
         # Step 2: Determine effective start date
         df_with_dates = self.date_manager.determine_effective_start(
@@ -130,6 +133,62 @@ class SCDProcessor:
         
         logger.info(f"Prepared {prepared_df.count()} records with SCD metadata")
         return prepared_df
+    
+    def _deduplicate_source_data(self, source_df: DataFrame) -> DataFrame:
+        """
+        Deduplicate source data to prevent merge conflicts.
+        
+        Args:
+            source_df: Source DataFrame
+            
+        Returns:
+            Deduplicated DataFrame
+        """
+        # Skip deduplication if disabled
+        if not self.config.enable_source_deduplication:
+            logger.info("Source deduplication is disabled")
+            return source_df
+        
+        from pyspark.sql.functions import row_number, col
+        from pyspark.sql.window import Window
+        
+        # Check if we have duplicates based on business keys
+        original_count = source_df.count()
+        
+        # Create window specification for deduplication
+        # Use business keys + effective date for deduplication
+        if self.config.deduplication_strategy == "latest":
+            # Keep the record with the latest effective date
+            window_spec = Window.partitionBy(*self.config.business_key_columns).orderBy(
+                col(self.config.effective_from_column).desc_nulls_last()
+            )
+        elif self.config.deduplication_strategy == "earliest":
+            # Keep the record with the earliest effective date
+            window_spec = Window.partitionBy(*self.config.business_key_columns).orderBy(
+                col(self.config.effective_from_column).asc_nulls_last()
+            )
+        else:
+            # Default to latest
+            window_spec = Window.partitionBy(*self.config.business_key_columns).orderBy(
+                col(self.config.effective_from_column).desc_nulls_last()
+            )
+        
+        # Add row number to identify duplicates
+        df_with_row_num = source_df.withColumn("row_num", row_number().over(window_spec))
+        
+        # Keep only the first record for each business key
+        deduplicated_df = df_with_row_num.filter(col("row_num") == 1).drop("row_num")
+        
+        deduplicated_count = deduplicated_df.count()
+        duplicates_removed = original_count - deduplicated_count
+        
+        if duplicates_removed > 0:
+            logger.warning(f"Removed {duplicates_removed} duplicate records from source data using '{self.config.deduplication_strategy}' strategy")
+            logger.warning(f"Original: {original_count}, After deduplication: {deduplicated_count}")
+        else:
+            logger.info("No duplicate records found in source data")
+        
+        return deduplicated_df
     
     def process_incremental(self, source_df: DataFrame, 
                           last_processed_timestamp: str) -> ProcessingMetrics:
