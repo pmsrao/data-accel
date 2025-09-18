@@ -259,8 +259,14 @@ class RecordManager:
         Returns:
             Number of new versions inserted
         """
+        from pyspark.sql.functions import monotonically_increasing_id
+        
         # The DataFrame is already cleaned and has unambiguous column references
-        new_versions_df = changed_records_df
+        # But we need to generate new surrogate keys for the new versions
+        new_versions_df = changed_records_df.withColumn(
+            self.config.surrogate_key_column,
+            monotonically_increasing_id()
+        )
         
         # For new versions, we need to insert them directly since they have different surrogate keys
         # We can't use merge with whenNotMatched because the business keys will match
