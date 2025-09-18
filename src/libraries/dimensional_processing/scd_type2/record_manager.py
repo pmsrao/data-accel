@@ -303,6 +303,7 @@ class RecordManager:
         # So we'll write to a temp table and read back after the merge
         
         logger.info(f"🔍 DEBUG: Original DataFrame count: {changed_records_df.count()}")
+        logger.info(f"🔍 DEBUG: Original DataFrame columns: {changed_records_df.columns}")
         
         # Create a temporary table to store the data
         temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
@@ -317,6 +318,16 @@ class RecordManager:
         from pyspark.sql import SparkSession
         spark = SparkSession.getActiveSession()
         reconstructed_df = spark.table(temp_table_name)
+        
+        # Ensure all required columns are present
+        logger.info(f"🔍 DEBUG: Reconstructed DataFrame columns: {reconstructed_df.columns}")
+        
+        # Check if effective_end_ts_utc column is missing and add it if needed
+        if self.config.effective_end_column not in reconstructed_df.columns:
+            logger.info(f"🔍 DEBUG: Adding missing column: {self.config.effective_end_column}")
+            from pyspark.sql.functions import lit
+            reconstructed_df = reconstructed_df.withColumn(self.config.effective_end_column, lit(None).cast("timestamp"))
+        
         reconstructed_df.persist()
         reconstructed_df.count()  # Force evaluation
         
