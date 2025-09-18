@@ -65,40 +65,33 @@ class SCDProcessor:
         start_time = time.time()
         
         try:
-            logger.info(f"🔍 DEBUG: Starting SCD processing for {source_df.count()} records")
+            logger.info(f"Starting SCD processing for {source_df.count()} records")
             
             # Step 1: Validate input data
-            logger.info("🔍 DEBUG: Step 1 - Validating input data")
             validation_result = self.validator.validate_source_data(source_df)
             if not validation_result.is_valid:
                 logger.error(f"Validation failed: {validation_result.errors}")
                 raise SCDValidationError(f"Validation failed: {validation_result.errors}")
             
             # Step 2: Add error tracking columns
-            logger.info("🔍 DEBUG: Step 2 - Adding error tracking columns")
             source_df = add_error_columns(source_df, 
                                         self.config.error_flag_column,
                                         self.config.error_message_column)
             
             # Step 3: Prepare source data with SCD metadata
-            logger.info("🔍 DEBUG: Step 3 - Preparing source data")
             prepared_df = self._prepare_source_data(source_df)
             
             # Step 4: Get current records from target table
-            logger.info("🔍 DEBUG: Step 4 - Getting current records")
             current_records = self.record_manager.get_current_records()
             
             # Step 5: Create change plan
-            logger.info("🔍 DEBUG: Step 5 - Creating change plan")
             change_plan = self.record_manager.create_change_plan(prepared_df, current_records)
             
             # Step 6: Execute changes
-            logger.info("🔍 DEBUG: Step 6 - Executing change plan")
-            execution_result = self.record_manager.execute_change_plan(change_plan)
+            execution_result = self.record_manager.execute_change_plan(change_plan, source_data)
             
             # Step 7: Optimize table if enabled
             if self.config.enable_optimization:
-                logger.info("🔍 DEBUG: Step 7 - Optimizing table")
                 self.record_manager.optimize_table()
             
             # Step 8: Calculate final metrics

@@ -69,19 +69,7 @@ class RecordManager:
         """
         logger.info("🚀 ENTER: create_change_plan")
         
-        # DEBUG: Log input DataFrames
-        logger.info(f"🔍 DEBUG: Source DataFrame count: {source_df.count()}")
-        logger.info(f"🔍 DEBUG: Current DataFrame count: {current_df.count()}")
-        logger.info(f"🔍 DEBUG: Source DataFrame columns: {source_df.columns}")
-        logger.info(f"🔍 DEBUG: Current DataFrame columns: {current_df.columns}")
-        
-        # DEBUG: Show sample source data
-        logger.info("🔍 DEBUG: Sample source data:")
-        source_df.select(*self.config.business_key_columns, self.config.scd_hash_column).show(5, truncate=False)
-        
-        # DEBUG: Show sample current data
-        logger.info("🔍 DEBUG: Sample current data:")
-        current_df.select(*self.config.business_key_columns, self.config.scd_hash_column).show(5, truncate=False)
+        logger.info(f"Source: {source_df.count()} records, Current: {current_df.count()} records")
         
         # Build join condition using PySpark Column expressions
         # Create join condition using Column expressions
@@ -99,8 +87,7 @@ class RecordManager:
             "full_outer"
         )
         
-        logger.info(f"🔍 DEBUG: Joined DataFrame count: {joined_df.count()}")
-        logger.info(f"🔍 DEBUG: Joined DataFrame columns: {joined_df.columns}")
+        logger.info(f"Joined: {joined_df.count()} records")
         
         # Categorize records using the joined DataFrame
         # Check if current record exists by checking if the surrogate key is null
@@ -112,27 +99,7 @@ class RecordManager:
             col(f"source.{self.config.scd_hash_column}") != col(f"current.{self.config.scd_hash_column}")
         )
         
-        logger.info(f"🔍 DEBUG: Raw categorization - New: {new_records_raw.count()}, Unchanged: {unchanged_records_raw.count()}, Changed: {changed_records_raw.count()}")
-        
-        # DEBUG: Show sample changed records
-        if changed_records_raw.count() > 0:
-            logger.info("🔍 DEBUG: Sample changed records (raw):")
-            changed_records_raw.select(
-                col(f"source.{self.config.business_key_columns[0]}").alias("source_bk"),
-                col(f"current.{self.config.business_key_columns[0]}").alias("current_bk"),
-                col(f"source.{self.config.scd_hash_column}").alias("source_hash"),
-                col(f"current.{self.config.scd_hash_column}").alias("current_hash")
-            ).show(5, truncate=False)
-        
-        # DEBUG: Show sample new records
-        if new_records_raw.count() > 0:
-            logger.info("🔍 DEBUG: Sample new records (raw):")
-            new_records_raw.select(
-                col(f"source.{self.config.business_key_columns[0]}").alias("source_bk"),
-                col(f"current.{self.config.business_key_columns[0]}").alias("current_bk"),
-                col(f"source.{self.config.scd_hash_column}").alias("source_hash"),
-                col(f"current.{self.config.scd_hash_column}").alias("current_hash")
-            ).show(5, truncate=False)
+        logger.info(f"Raw categorization - New: {new_records_raw.count()}, Unchanged: {unchanged_records_raw.count()}, Changed: {changed_records_raw.count()}")
         
         # Clean the DataFrames to avoid ambiguity
         # Always clean the DataFrames, even if empty, to ensure consistent column structure
@@ -140,12 +107,7 @@ class RecordManager:
         unchanged_records = unchanged_records_raw  # Keep unchanged records as-is since they don't need processing
         changed_records = self._clean_joined_dataframe_for_changes(changed_records_raw, "source")
         
-        logger.info(f"🔍 DEBUG: Cleaned categorization - New: {new_records.count()}, Unchanged: {unchanged_records.count()}, Changed: {changed_records.count()}")
-        
-        # DEBUG: Show sample cleaned changed records
-        if changed_records.count() > 0:
-            logger.info("🔍 DEBUG: Sample changed records (cleaned):")
-            changed_records.select(*self.config.business_key_columns, self.config.scd_hash_column, self.config.effective_start_column).show(5, truncate=False)
+        logger.info(f"Cleaned categorization - New: {new_records.count()}, Unchanged: {unchanged_records.count()}, Changed: {changed_records.count()}")
         
         change_plan = {
             "new_records": new_records,
@@ -157,7 +119,7 @@ class RecordManager:
         logger.info("🏁 EXIT: create_change_plan")
         return change_plan
     
-    def execute_change_plan(self, change_plan: Dict[str, DataFrame]) -> ProcessingMetrics:
+    def execute_change_plan(self, change_plan: Dict[str, DataFrame], source_df: DataFrame = None) -> ProcessingMetrics:
         """
         Execute the complete change plan.
         
@@ -172,36 +134,24 @@ class RecordManager:
         metrics = ProcessingMetrics()
         
         try:
-            logger.info(f"🔍 DEBUG: execute_change_plan called with change_plan keys: {list(change_plan.keys())}")
-            logger.info(f"🔍 DEBUG: New records count: {change_plan['new_records'].count()}")
-            logger.info(f"🔍 DEBUG: Changed records count: {change_plan['changed_records'].count()}")
-            logger.info(f"🔍 DEBUG: Unchanged records count: {change_plan['unchanged_records'].count()}")
+            logger.info(f"Processing - New: {change_plan['new_records'].count()}, Changed: {change_plan['changed_records'].count()}, Unchanged: {change_plan['unchanged_records'].count()}")
             
             # Process new records
-            logger.info("🔍 DEBUG: About to process new records")
             new_count = self._insert_new_records(change_plan["new_records"])
-            logger.info(f"🔍 DEBUG: New records processed, count: {new_count}")
             metrics.new_records_created = new_count
             
             # Process changed records
-            logger.info("🔍 DEBUG: About to process changed records")
-            logger.info(f"🔍 DEBUG: Changed records DataFrame in change plan: {change_plan['changed_records'].count()} records")
-            logger.info(f"🔍 DEBUG: Changed records DataFrame columns: {change_plan['changed_records'].columns}")
-            updated_count = self._process_changed_records(change_plan["changed_records"])
-            logger.info(f"🔍 DEBUG: Changed records processed, count: {updated_count}")
+            updated_count = self._process_changed_records(change_plan["changed_records"], source_df)
             metrics.existing_records_updated = updated_count
             
             # Process unchanged records (update if needed)
-            logger.info("🔍 DEBUG: About to process unchanged records")
             unchanged_count = self._process_unchanged_records(change_plan["unchanged_records"])
-            logger.info(f"🔍 DEBUG: Unchanged records processed, count: {unchanged_count}")
             metrics.existing_records_updated += unchanged_count
             
             metrics.records_processed = new_count + updated_count + unchanged_count
             metrics.processing_time_seconds = time.time() - start_time
             
-            logger.info(f"🔍 DEBUG: Final metrics - New: {new_count}, Updated: {updated_count}, Unchanged: {unchanged_count}, Total: {metrics.records_processed}")
-            logger.info(f"Change plan executed successfully. Metrics: {metrics.to_dict()}")
+            logger.info(f"✅ Completed - New: {new_count}, Updated: {updated_count}, Unchanged: {unchanged_count}")
             logger.info("🏁 EXIT: execute_change_plan")
             return metrics
             
@@ -221,16 +171,10 @@ class RecordManager:
             Number of records inserted
         """
         logger.info("🚀 ENTER: _insert_new_records")
-        logger.info(f"🔍 DEBUG: _insert_new_records called with {new_records_df.count()} records")
         
         if new_records_df.isEmpty():
-            logger.info("🔍 DEBUG: New records DataFrame is empty, returning 0")
             logger.info("🏁 EXIT: _insert_new_records (empty)")
             return 0
-        
-        # DEBUG: Show sample new records before insertion
-        logger.info("🔍 DEBUG: Sample new records before insertion:")
-        new_records_df.select(*self.config.business_key_columns, self.config.surrogate_key_column, self.config.effective_start_column).show(5, truncate=False)
         
         # Prepare new records for insertion
         # The DataFrame is already cleaned and has unambiguous column references
@@ -243,11 +187,7 @@ class RecordManager:
         
         merge_condition = reduce(lambda a, b: a & b, merge_conditions)
         
-        logger.info("🔍 DEBUG: About to insert new records")
-        logger.info(f"🔍 DEBUG: Merge condition: {merge_condition}")
         before_count = self.delta_table.toDF().count()
-        logger.info(f"🔍 DEBUG: Target table count before merge: {before_count}")
-        logger.info(f"🔍 DEBUG: Source DataFrame count: {insert_df.count()}")
         
         # Insert new records
         (self.delta_table.alias("target")
@@ -256,21 +196,13 @@ class RecordManager:
          .execute())
         
         after_count = self.delta_table.toDF().count()
-        logger.info(f"🔍 DEBUG: Target table count after merge: {after_count}")
-        
-        # Calculate actual inserted records
         actual_inserted = after_count - before_count
-        logger.info(f"🔍 DEBUG: ✅ Actually inserted {actual_inserted} new records (before: {before_count}, after: {after_count})")
+        logger.info(f"✅ Inserted {actual_inserted} new records")
         
-        logger.info("🔍 DEBUG: Finished inserting new records")
-        
-        # Return the actual number of records inserted
-        record_count = insert_df.count()  # This is the number of records we attempted to insert
-        logger.info(f"Inserted {record_count} new records")
         logger.info("🏁 EXIT: _insert_new_records")
-        return record_count
+        return actual_inserted
     
-    def _process_changed_records(self, changed_records_df: DataFrame) -> int:
+    def _process_changed_records(self, changed_records_df: DataFrame, original_source_df: DataFrame = None) -> int:
         """
         Process changed records (expire old, insert new).
         
@@ -281,29 +213,19 @@ class RecordManager:
             Number of new versions created
         """
         logger.info("🚀 ENTER: _process_changed_records")
-        logger.info(f"🔍 DEBUG: _process_changed_records called with {changed_records_df.count()} records")
         
         if changed_records_df.isEmpty():
-            logger.info("🔍 DEBUG: Changed records DataFrame is empty, returning 0")
             logger.info("🏁 EXIT: _process_changed_records (empty)")
             return 0
         
         record_count = changed_records_df.count()
-        logger.info(f"🔍 DEBUG: Processing {record_count} changed records")
-        
-        # DEBUG: Show sample changed records before processing
-        logger.info("🔍 DEBUG: Sample changed records before processing:")
-        changed_records_df.select(*self.config.business_key_columns, self.config.scd_hash_column, self.config.effective_start_column).show(5, truncate=False)
-        
-        # First, expire existing records
-        logger.info("🔍 DEBUG: About to expire existing records")
+        logger.info(f"Processing {record_count} changed records")
         
         # CRITICAL: Use temporary table to avoid DataFrame corruption after merge
         # The issue is that even with persist(), the DataFrame gets corrupted after merge
         # So we'll write to a temp table and read back after the merge
         
-        logger.info(f"🔍 DEBUG: Original DataFrame count: {changed_records_df.count()}")
-        logger.info(f"🔍 DEBUG: Original DataFrame columns: {changed_records_df.columns}")
+        logger.info(f"Storing {changed_records_df.count()} records in temporary table")
         
         # CRITICAL: Ensure effective_end_ts_utc column is preserved in temporary table
         # Spark drops columns with only NULL values when writing to tables
@@ -318,11 +240,9 @@ class RecordManager:
         # Create a temporary table to store the data
         temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
         df_for_temp_table.write.mode("overwrite").saveAsTable(temp_table_name)
-        logger.info(f"🔍 DEBUG: Stored data in temporary table: {temp_table_name}")
         
         # Execute the merge operation
         self._expire_existing_records(changed_records_df)
-        logger.info("🔍 DEBUG: Finished expiring existing records")
         
         # Read back the data from temporary table
         from pyspark.sql import SparkSession
@@ -336,24 +256,48 @@ class RecordManager:
             .otherwise(col(self.config.effective_end_column))
         )
         
-        # Ensure all required columns are present
-        logger.info(f"🔍 DEBUG: Reconstructed DataFrame columns: {reconstructed_df.columns}")
+        # CRITICAL: The reconstructed DataFrame has the wrong effective_start_ts_utc values
+        # We need to use the original source data's effective_start_ts_utc values
+        # The temporary table preserved the original values, but we need the new ones from source
+        logger.info("Updating effective dates from source data")
+        
+        # Get the correct effective_start_ts_utc values from the original source data
+        if original_source_df is not None:
+            # Create a lookup DataFrame with the correct effective dates from the original source
+            source_lookup = original_source_df.select(
+                *self.config.business_key_columns,
+                self.config.effective_start_column
+            ).distinct()
+            
+            # Join and update the effective_start_ts_utc
+            reconstructed_df = reconstructed_df.join(
+                source_lookup, 
+                [col(f"reconstructed_df.{col_name}") == col(f"source_lookup.{col_name}") 
+                 for col_name in self.config.business_key_columns],
+                "left"
+            ).withColumn(
+                self.config.effective_start_column,
+                when(col(f"source_lookup.{self.config.effective_start_column}").isNotNull(), 
+                     col(f"source_lookup.{self.config.effective_start_column}"))
+                .otherwise(col(f"reconstructed_df.{self.config.effective_start_column}"))
+            ).drop(*[f"source_lookup.{col_name}" for col_name in self.config.business_key_columns + [self.config.effective_start_column]])
+        else:
+            # Fallback: use current timestamp for new versions
+            from pyspark.sql.functions import current_timestamp
+            reconstructed_df = reconstructed_df.withColumn(
+                self.config.effective_start_column,
+                current_timestamp()  # Use current timestamp for new versions
+            )
         
         reconstructed_df.persist()
         reconstructed_df.count()  # Force evaluation
         
-        logger.info(f"🔍 DEBUG: Reconstructed DataFrame count: {reconstructed_df.count()}")
-        logger.info("🔍 DEBUG: ✅ DataFrame reconstructed successfully - showing sample data:")
-        reconstructed_df.select(*self.config.business_key_columns, self.config.scd_hash_column, self.config.effective_start_column).show(5, truncate=False)
-        
         # Clean up temporary table
         spark.sql(f"DROP TABLE IF EXISTS {temp_table_name}")
-        logger.info(f"🔍 DEBUG: Cleaned up temporary table: {temp_table_name}")
         
         # Then, insert new versions using the reconstructed DataFrame
-        logger.info("🔍 DEBUG: About to insert new versions")
         new_versions_count = self._insert_new_versions(reconstructed_df)
-        logger.info(f"🔍 DEBUG: Finished inserting {new_versions_count} new versions")
+        logger.info(f"✅ Created {new_versions_count} new versions")
         
         logger.info(f"Processed {record_count} changed records, created {new_versions_count} new versions")
         logger.info("🏁 EXIT: _process_changed_records")
@@ -388,14 +332,7 @@ class RecordManager:
         logger.info("🚀 ENTER: _expire_existing_records")
         from pyspark.sql.functions import expr
         
-        logger.info(f"🔍 DEBUG: _expire_existing_records called with {changed_records_df.count()} records")
-        logger.info(f"🔍 DEBUG: Input DataFrame ID: {id(changed_records_df)}")
-        logger.info(f"🔍 DEBUG: Input DataFrame columns: {changed_records_df.columns}")
-        logger.info(f"🔍 DEBUG: Input DataFrame is cached: {changed_records_df.is_cached}")
-        
-        # DEBUG: Show sample data before expiring
-        logger.info("🔍 DEBUG: Sample changed records before expiring:")
-        changed_records_df.select(*self.config.business_key_columns, self.config.effective_start_column).show(5, truncate=False)
+        logger.info(f"Expiring {changed_records_df.count()} existing records")
         
         # Build expire condition using Column expressions with explicit references
         expire_conditions = []
@@ -415,9 +352,7 @@ class RecordManager:
         # Use expr to subtract 1 second from the timestamp
         expire_end_date = expr(f"source.{self.config.effective_start_column} - interval 1 second")
         
-        logger.info("🔍 DEBUG: About to execute merge for expiring records")
-        logger.info(f"🔍 DEBUG: Expire condition: {expire_condition}")
-        logger.info(f"🔍 DEBUG: Expire end date expression: source.{self.config.effective_start_column} - interval 1 second")
+        logger.info("Executing merge to expire existing records")
         
         # Execute merge to expire existing records
         (self.delta_table.alias("target")
@@ -429,12 +364,7 @@ class RecordManager:
          })
          .execute())
         
-        logger.info("🔍 DEBUG: Finished executing merge for expiring records")
-        logger.info("Expired existing records for changed records")
-        
-        # CRITICAL: Check if the input DataFrame was affected by the merge operation
-        logger.info(f"🔍 DEBUG: After merge - Input DataFrame count: {changed_records_df.count()}")
-        
+        logger.info("✅ Expired existing records")
         logger.info("🏁 EXIT: _expire_existing_records")
     
     def _insert_new_versions(self, changed_records_df: DataFrame) -> int:
@@ -450,47 +380,28 @@ class RecordManager:
         logger.info("🚀 ENTER: _insert_new_versions")
         from pyspark.sql.functions import monotonically_increasing_id
         
-        logger.info(f"🔍 DEBUG: _insert_new_versions called with {changed_records_df.count()} records")
-        logger.info(f"🔍 DEBUG: Input DataFrame columns: {changed_records_df.columns}")
-        
-        # First, ensure we don't have any existing surrogate key column
         # Drop the surrogate key column if it exists to avoid conflicts
         if self.config.surrogate_key_column in changed_records_df.columns:
-            logger.info(f"🔍 DEBUG: Dropping existing surrogate key column: {self.config.surrogate_key_column}")
             changed_records_df = changed_records_df.drop(self.config.surrogate_key_column)
-            logger.info(f"🔍 DEBUG: After dropping surrogate key, columns: {changed_records_df.columns}")
-        else:
-            logger.info(f"🔍 DEBUG: No existing surrogate key column found: {self.config.surrogate_key_column}")
         
         # Generate new surrogate keys for the new versions (cast to StringType for compatibility)
-        logger.info("🔍 DEBUG: About to generate new surrogate keys")
         new_versions_df = changed_records_df.withColumn(
             self.config.surrogate_key_column,
             monotonically_increasing_id().cast("string")
         )
-        
-        logger.info(f"🔍 DEBUG: After generating surrogate keys, columns: {new_versions_df.columns}")
-        logger.info(f"🔍 DEBUG: New versions DataFrame count: {new_versions_df.count()}")
-        
-        # DEBUG: Show sample new versions data
-        logger.info("🔍 DEBUG: Sample new versions data before insertion:")
-        new_versions_df.select(*self.config.business_key_columns, self.config.surrogate_key_column, self.config.effective_start_column).show(5, truncate=False)
         
         # For new versions, we need to insert them directly since they have different surrogate keys
         # We can't use merge with whenNotMatched because the business keys will match
         # Instead, we'll insert them directly as new records
         
         # Insert new versions directly
-        logger.info(f"🔍 DEBUG: About to insert new versions into table: {self.config.target_table}")
         new_versions_df.write \
             .format("delta") \
             .mode("append") \
             .saveAsTable(self.config.target_table)
         
-        logger.info("🔍 DEBUG: Finished inserting new versions")
-        
         record_count = new_versions_df.count()
-        logger.info(f"Inserted {record_count} new versions for changed records")
+        logger.info(f"✅ Inserted {record_count} new versions")
         logger.info("🏁 EXIT: _insert_new_versions")
         return record_count
     
