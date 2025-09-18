@@ -6,6 +6,7 @@ from typing import Dict, Any
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col, current_timestamp, lit
 from delta.tables import DeltaTable
+from functools import reduce
 import logging
 import time
 
@@ -56,11 +57,14 @@ class RecordManager:
         Returns:
             Dictionary with categorized DataFrames
         """
-        # Build join condition explicitly to avoid ambiguous references
-        join_condition = " AND ".join([
-            f"source.{col} = current.{col}" 
-            for col in self.config.business_key_columns
-        ])
+        # Build join condition using PySpark Column expressions
+        # Create join condition using Column expressions
+        join_conditions = []
+        for bk_col in self.config.business_key_columns:
+            join_conditions.append(col(f"source.{bk_col}") == col(f"current.{bk_col}"))
+        
+        # Combine all conditions with AND
+        join_condition = reduce(lambda a, b: a & b, join_conditions)
         
         # Join source with current records using explicit condition
         joined_df = source_df.alias("source").join(
