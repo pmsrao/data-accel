@@ -212,10 +212,16 @@ class RecordManager:
         Args:
             changed_records_df: DataFrame with changed records
         """
-        expire_condition = " AND ".join([
-            f"target.{col} = source.{col}" 
-            for col in self.config.business_key_columns
-        ]) + f" AND target.{self.config.is_current_column} = 'Y'"
+        # Build expire condition using Column expressions
+        expire_conditions = []
+        for bk_col in self.config.business_key_columns:
+            expire_conditions.append(col(f"target.{bk_col}") == col(f"source.{bk_col}"))
+        
+        # Add condition for current records
+        expire_conditions.append(col(f"target.{self.config.is_current_column}") == lit("Y"))
+        
+        # Combine all conditions with AND
+        expire_condition = reduce(lambda a, b: a & b, expire_conditions)
         
         (self.delta_table.alias("target")
          .merge(changed_records_df.alias("source"), expire_condition)
@@ -347,7 +353,7 @@ class RecordManager:
         
         return joined_df.select(*clean_columns)
     
-    def _build_merge_condition(self, source_alias: str, target_alias: str) -> str:
+    def _build_merge_condition(self, source_alias: str, target_alias: str):
         """
         Build merge condition for business keys.
         
@@ -356,12 +362,16 @@ class RecordManager:
             target_alias: Target table alias
             
         Returns:
-            Merge condition string
+            Merge condition as Column expression
         """
-        return " AND ".join([
-            f"{target_alias}.{col} = {source_alias}.{col}" 
-            for col in self.config.business_key_columns
-        ])
+        # Build merge condition using Column expressions
+        merge_conditions = []
+        for bk_col in self.config.business_key_columns:
+            merge_conditions.append(col(f"{target_alias}.{bk_col}") == col(f"{source_alias}.{bk_col}"))
+        
+        # Combine all conditions with AND
+        merge_condition = reduce(lambda a, b: a & b, merge_conditions)
+        return merge_condition
     
     def optimize_table(self) -> None:
         """
