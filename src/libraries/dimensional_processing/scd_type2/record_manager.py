@@ -305,9 +305,19 @@ class RecordManager:
         logger.info(f"🔍 DEBUG: Original DataFrame count: {changed_records_df.count()}")
         logger.info(f"🔍 DEBUG: Original DataFrame columns: {changed_records_df.columns}")
         
+        # CRITICAL: Ensure effective_end_ts_utc column is preserved in temporary table
+        # Spark drops columns with only NULL values when writing to tables
+        # So we need to set a placeholder value before writing
+        from pyspark.sql.functions import lit, when, col
+        df_for_temp_table = changed_records_df.withColumn(
+            self.config.effective_end_column,
+            when(col(self.config.effective_end_column).isNull(), lit("9999-12-31 23:59:59").cast("timestamp"))
+            .otherwise(col(self.config.effective_end_column))
+        )
+        
         # Create a temporary table to store the data
         temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
-        changed_records_df.write.mode("overwrite").saveAsTable(temp_table_name)
+        df_for_temp_table.write.mode("overwrite").saveAsTable(temp_table_name)
         logger.info(f"🔍 DEBUG: Stored data in temporary table: {temp_table_name}")
         
         # Execute the merge operation
@@ -319,14 +329,15 @@ class RecordManager:
         spark = SparkSession.getActiveSession()
         reconstructed_df = spark.table(temp_table_name)
         
+        # Restore the NULL values for effective_end_ts_utc
+        reconstructed_df = reconstructed_df.withColumn(
+            self.config.effective_end_column,
+            when(col(self.config.effective_end_column) == lit("9999-12-31 23:59:59").cast("timestamp"), lit(None).cast("timestamp"))
+            .otherwise(col(self.config.effective_end_column))
+        )
+        
         # Ensure all required columns are present
         logger.info(f"🔍 DEBUG: Reconstructed DataFrame columns: {reconstructed_df.columns}")
-        
-        # Check if effective_end_ts_utc column is missing and add it if needed
-        if self.config.effective_end_column not in reconstructed_df.columns:
-            logger.info(f"🔍 DEBUG: Adding missing column: {self.config.effective_end_column}")
-            from pyspark.sql.functions import lit
-            reconstructed_df = reconstructed_df.withColumn(self.config.effective_end_column, lit(None).cast("timestamp"))
         
         reconstructed_df.persist()
         reconstructed_df.count()  # Force evaluation
