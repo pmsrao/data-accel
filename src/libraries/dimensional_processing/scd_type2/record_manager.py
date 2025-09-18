@@ -279,16 +279,20 @@ class RecordManager:
             from functools import reduce
             join_condition = reduce(lambda a, b: a & b, join_conditions)
             
-            reconstructed_df = reconstructed_df.join(
+            # Join and update the effective_start_ts_utc
+            joined_df = reconstructed_df.join(
                 source_lookup, 
                 join_condition,
                 "left"
-            ).withColumn(
+            )
+            
+            # Update the effective_start_ts_utc column with the correct values
+            reconstructed_df = joined_df.withColumn(
                 self.config.effective_start_column,
                 when(source_lookup[self.config.effective_start_column].isNotNull(), 
                      source_lookup[self.config.effective_start_column])
                 .otherwise(reconstructed_df[self.config.effective_start_column])
-            ).drop(*[f"source_lookup.{col_name}" for col_name in self.config.business_key_columns + [self.config.effective_start_column]])
+            ).select(*reconstructed_df.columns)  # Select only the original columns
         else:
             # Fallback: use current timestamp for new versions
             from pyspark.sql.functions import current_timestamp
