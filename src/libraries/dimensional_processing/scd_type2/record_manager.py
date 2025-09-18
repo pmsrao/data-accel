@@ -112,6 +112,16 @@ class RecordManager:
                 col(f"current.{self.config.scd_hash_column}").alias("current_hash")
             ).show(5, truncate=False)
         
+        # DEBUG: Show sample new records
+        if new_records_raw.count() > 0:
+            logger.info("🔍 DEBUG: Sample new records (raw):")
+            new_records_raw.select(
+                col(f"source.{self.config.business_key_columns[0]}").alias("source_bk"),
+                col(f"current.{self.config.business_key_columns[0]}").alias("current_bk"),
+                col(f"source.{self.config.scd_hash_column}").alias("source_hash"),
+                col(f"current.{self.config.scd_hash_column}").alias("current_hash")
+            ).show(5, truncate=False)
+        
         # Clean the DataFrames to avoid ambiguity
         # Always clean the DataFrames, even if empty, to ensure consistent column structure
         new_records = self._clean_joined_dataframe(new_records_raw, "source")
@@ -180,8 +190,15 @@ class RecordManager:
         Returns:
             Number of records inserted
         """
+        logger.info(f"🔍 DEBUG: _insert_new_records called with {new_records_df.count()} records")
+        
         if new_records_df.isEmpty():
+            logger.info("🔍 DEBUG: New records DataFrame is empty, returning 0")
             return 0
+        
+        # DEBUG: Show sample new records before insertion
+        logger.info("🔍 DEBUG: Sample new records before insertion:")
+        new_records_df.select(*self.config.business_key_columns, self.config.surrogate_key_column, self.config.effective_start_column).show(5, truncate=False)
         
         # Prepare new records for insertion
         # The DataFrame is already cleaned and has unambiguous column references
@@ -194,11 +211,14 @@ class RecordManager:
         
         merge_condition = reduce(lambda a, b: a & b, merge_conditions)
         
+        logger.info("🔍 DEBUG: About to insert new records")
         # Insert new records
         (self.delta_table.alias("target")
          .merge(insert_df.alias("source"), merge_condition)
          .whenNotMatchedInsertAll()
          .execute())
+        
+        logger.info("🔍 DEBUG: Finished inserting new records")
         
         record_count = insert_df.count()
         logger.info(f"Inserted {record_count} new records")
