@@ -135,6 +135,7 @@ scd_config = SCDConfig(
     target_table="scd_test.customer_dim",
     business_key_columns=["customer_id"],
     scd_columns=["name", "email", "address"],
+    surrogate_key_column="customer_sk",
     effective_from_column="last_modified_ts",
     initial_effective_from_column="created_ts",
     enable_optimization=True,

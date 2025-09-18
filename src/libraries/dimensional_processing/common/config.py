@@ -23,6 +23,7 @@ class SCDConfig:
     target_table: str
     business_key_columns: List[str]
     scd_columns: List[str]
+    surrogate_key_column: str  # Surrogate key column name (e.g., customer_sk, product_sk, etc.)
     
     # Optional parameters
     effective_from_column: Optional[str] = None

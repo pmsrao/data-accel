@@ -64,7 +64,8 @@ class RecordManager:
         )
         
         # Categorize records
-        new_records = joined_df.filter(col("current.business_key").isNull())
+        # Check if current record exists by checking if the surrogate key is null
+        new_records = joined_df.filter(col(f"current.{self.config.surrogate_key_column}").isNull())
         unchanged_records = joined_df.filter(
             col(f"source.{self.config.scd_hash_column}") == col(f"current.{self.config.scd_hash_column}")
         )
