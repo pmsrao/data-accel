@@ -83,6 +83,13 @@ class RecordManager:
             col(f"source.{self.config.scd_hash_column}") != col(f"current.{self.config.scd_hash_column}")
         )
         
+        # For new records, we only need the source data (no current data exists)
+        # For changed records, we need to clean up the DataFrame to avoid ambiguity
+        if not new_records.isEmpty():
+            new_records = self._clean_joined_dataframe(new_records, "source")
+        if not changed_records.isEmpty():
+            changed_records = self._clean_joined_dataframe(changed_records, "source")
+        
         change_plan = {
             "new_records": new_records,
             "unchanged_records": unchanged_records,
@@ -142,9 +149,8 @@ class RecordManager:
             return 0
         
         # Prepare new records for insertion
-        # Select only the source columns with explicit aliases to avoid ambiguity
-        source_columns = self._build_source_columns_with_aliases()
-        insert_df = new_records_df.select(*source_columns)
+        # The DataFrame is already cleaned and has unambiguous column references
+        insert_df = new_records_df
         
         # Insert new records
         (self.delta_table.alias("target")
@@ -229,9 +235,8 @@ class RecordManager:
         Args:
             changed_records_df: DataFrame with changed records
         """
-        # Build column list dynamically from configuration with explicit aliases
-        source_columns = self._build_source_columns_with_aliases()
-        new_versions_df = changed_records_df.select(*source_columns)
+        # The DataFrame is already cleaned and has unambiguous column references
+        new_versions_df = changed_records_df
         
         (self.delta_table.alias("target")
          .merge(new_versions_df.alias("source"), 
@@ -304,6 +309,43 @@ class RecordManager:
         ])
         
         return source_columns
+    
+    def _clean_joined_dataframe(self, joined_df: DataFrame, alias_prefix: str) -> DataFrame:
+        """
+        Clean joined DataFrame to avoid ambiguous column references.
+        
+        Args:
+            joined_df: DataFrame with joined data
+            alias_prefix: Prefix to use for column selection ("source" or "current")
+            
+        Returns:
+            Cleaned DataFrame with unambiguous column references
+        """
+        # Build list of columns to select from the specified alias
+        clean_columns = []
+        
+        # Add business key columns
+        for bk_col in self.config.business_key_columns:
+            clean_columns.append(col(f"{alias_prefix}.{bk_col}").alias(bk_col))
+        
+        # Add SCD columns
+        for scd_col in self.config.scd_columns:
+            clean_columns.append(col(f"{alias_prefix}.{scd_col}").alias(scd_col))
+        
+        # Add SCD metadata columns
+        clean_columns.extend([
+            col(f"{alias_prefix}.{self.config.scd_hash_column}").alias(self.config.scd_hash_column),
+            col(f"{alias_prefix}.{self.config.effective_start_column}").alias(self.config.effective_start_column),
+            col(f"{alias_prefix}.{self.config.effective_end_column}").alias(self.config.effective_end_column),
+            col(f"{alias_prefix}.{self.config.is_current_column}").alias(self.config.is_current_column),
+            col(f"{alias_prefix}.{self.config.created_ts_column}").alias(self.config.created_ts_column),
+            col(f"{alias_prefix}.{self.config.modified_ts_column}").alias(self.config.modified_ts_column),
+            col(f"{alias_prefix}.{self.config.error_flag_column}").alias(self.config.error_flag_column),
+            col(f"{alias_prefix}.{self.config.error_message_column}").alias(self.config.error_message_column),
+            col(f"{alias_prefix}.{self.config.surrogate_key_column}").alias(self.config.surrogate_key_column)
+        ])
+        
+        return joined_df.select(*clean_columns)
     
     def _build_merge_condition(self, source_alias: str, target_alias: str) -> str:
         """
