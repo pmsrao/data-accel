@@ -132,7 +132,9 @@ class RecordManager:
             return 0
         
         # Prepare new records for insertion
-        insert_df = new_records_df.select("source.*")
+        # Select only the source columns, excluding current columns to avoid ambiguity
+        source_columns = self._build_source_columns()
+        insert_df = new_records_df.select(*source_columns)
         
         # Insert new records
         (self.delta_table.alias("target")
@@ -217,7 +219,9 @@ class RecordManager:
         Args:
             changed_records_df: DataFrame with changed records
         """
-        new_versions_df = changed_records_df.select("source.*")
+        # Build column list dynamically from configuration
+        source_columns = self._build_source_columns()
+        new_versions_df = changed_records_df.select(*source_columns)
         
         (self.delta_table.alias("target")
          .merge(new_versions_df.alias("source"), 
@@ -226,6 +230,38 @@ class RecordManager:
          .execute())
         
         logger.info("Inserted new versions for changed records")
+    
+    def _build_source_columns(self) -> list:
+        """
+        Build list of source columns for selection.
+        
+        Returns:
+            List of column expressions for source data
+        """
+        source_columns = []
+        
+        # Add business key columns
+        for bk_col in self.config.business_key_columns:
+            source_columns.append(col(f"source.{bk_col}"))
+        
+        # Add SCD columns
+        for scd_col in self.config.scd_columns:
+            source_columns.append(col(f"source.{scd_col}"))
+        
+        # Add SCD metadata columns
+        source_columns.extend([
+            col(f"source.{self.config.scd_hash_column}"),
+            col(f"source.{self.config.effective_start_column}"),
+            col(f"source.{self.config.effective_end_column}"),
+            col(f"source.{self.config.is_current_column}"),
+            col(f"source.{self.config.created_ts_column}"),
+            col(f"source.{self.config.modified_ts_column}"),
+            col(f"source.{self.config.error_flag_column}"),
+            col(f"source.{self.config.error_message_column}"),
+            col(f"source.{self.config.surrogate_key_column}")
+        ])
+        
+        return source_columns
     
     def _build_merge_condition(self, source_alias: str, target_alias: str) -> str:
         """
