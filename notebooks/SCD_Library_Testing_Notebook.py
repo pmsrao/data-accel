@@ -28,7 +28,7 @@ import sys
 import os
 
 # Add the library path (adjust path as needed based on your workspace structure)
-sys.path.append('/Workspace/Users/your_username/dimensional_processing')  # Update this path
+sys.path.append('/Workspace/Repos/dev/data-accel/src/')  # Update this path
 
 from libraries.dimensional_processing.scd_type2.scd_processor import SCDProcessor
 from libraries.dimensional_processing.scd_type2.historical_data_deduplicator import HistoricalDataDeduplicator
@@ -166,7 +166,7 @@ key_config = KeyResolutionConfig(
     dimension_table="scd_test.customer_dim",
     business_key_columns=["customer_id"],
     surrogate_key_column="customer_sk",
-    effective_from_column="effective_start_ts_utc",
+    effective_start_column="effective_start_ts_utc",
     effective_end_column="effective_end_ts_utc",
     is_current_column="is_current",
     enable_caching=True,
@@ -180,7 +180,55 @@ print(f"   Surrogate Key: {key_config.surrogate_key_column}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 4: Test Historical Data Deduplication
+# MAGIC ## Step 4: Create Target Dimension Table
+# MAGIC 
+# MAGIC Create the target dimension table with the proper schema for SCD Type 2 processing.
+
+# COMMAND ----------
+
+# Create the target dimension table with proper SCD schema
+def create_target_dimension_table():
+    """Create the target dimension table with SCD Type 2 schema."""
+    
+    # Define the schema for the dimension table
+    schema = StructType([
+        StructField("customer_sk", StringType(), False),  # Surrogate key
+        StructField("customer_id", StringType(), True),   # Business key
+        StructField("name", StringType(), True),          # SCD attributes
+        StructField("email", StringType(), True),
+        StructField("address", StringType(), True),
+        StructField("scd_hash", StringType(), True),      # SCD metadata
+        StructField("effective_start_ts_utc", TimestampType(), True),
+        StructField("effective_end_ts_utc", TimestampType(), True),
+        StructField("is_current", StringType(), True),
+        StructField("created_ts_utc", TimestampType(), True),  # Audit columns
+        StructField("modified_ts_utc", TimestampType(), True),
+        StructField("_error_flag", StringType(), True),    # Error handling
+        StructField("_error_message", StringType(), True)
+    ])
+    
+    # Create empty DataFrame with the schema
+    empty_df = spark.createDataFrame([], schema)
+    
+    # Write as Delta table
+    empty_df.write \
+        .format("delta") \
+        .mode("overwrite") \
+        .option("overwriteSchema", "true") \
+        .saveAsTable("scd_test.customer_dim")
+    
+    print("✅ Target dimension table created successfully")
+    print("   Table: scd_test.customer_dim")
+    print("   Format: Delta")
+    print("   Schema: SCD Type 2 with audit columns")
+
+# Create the target table
+create_target_dimension_table()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 5: Test Historical Data Deduplication
 
 # COMMAND ----------
 
@@ -211,7 +259,7 @@ deduplicated_data.show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 5: Test SCD Type 2 Processing
+# MAGIC ## Step 6: Test SCD Type 2 Processing
 
 # COMMAND ----------
 
@@ -260,7 +308,7 @@ current_df.show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 6: Test Incremental SCD Processing
+# MAGIC ## Step 7: Test Incremental SCD Processing
 
 # COMMAND ----------
 
@@ -318,7 +366,7 @@ print(f"   Historical records: {final_historical}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 7: Test Dimensional Key Resolution
+# MAGIC ## Step 8: Test Dimensional Key Resolution
 
 # COMMAND ----------
 
@@ -358,7 +406,7 @@ if unresolved_keys > 0:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 8: Test Error Handling and Validation
+# MAGIC ## Step 9: Test Error Handling and Validation
 
 # COMMAND ----------
 
@@ -412,7 +460,7 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 9: Performance Testing
+# MAGIC ## Step 10: Performance Testing
 
 # COMMAND ----------
 
@@ -475,7 +523,7 @@ print(f"   Processing rate: {large_result.records_processed / large_processing_t
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 10: Final Summary and Cleanup
+# MAGIC ## Step 11: Final Summary and Cleanup
 
 # COMMAND ----------
 

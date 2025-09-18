@@ -73,12 +73,38 @@ class SCDValidator:
                     result.add_error(f"Found {null_count} null values in business key column: {col_name}")
     
     def _validate_duplicates(self, df: DataFrame, result: ValidationResult) -> None:
-        """Validate for duplicate records based on business keys."""
-        duplicate_count = (df.count() - 
-                          df.dropDuplicates(self.config.business_key_columns).count())
+        """Validate for duplicate records based on business keys and effective dates."""
+        # In SCD Type 2, we allow multiple records with the same business key
+        # as long as they have different effective dates or SCD attributes
+        # We only flag as duplicates if they have the same business key AND same effective date AND same SCD attributes
         
-        if duplicate_count > 0:
-            result.add_error(f"Found {duplicate_count} duplicate records based on business keys")
+        if self.config.effective_from_column in df.columns:
+            # Check for true duplicates: same business key + same effective date + same SCD attributes
+            duplicate_columns = (self.config.business_key_columns + 
+                               [self.config.effective_from_column] + 
+                               self.config.scd_columns)
+            
+            # Only check columns that exist in the DataFrame
+            existing_columns = [col for col in duplicate_columns if col in df.columns]
+            
+            if existing_columns:
+                duplicate_count = (df.count() - 
+                                  df.dropDuplicates(existing_columns).count())
+                
+                if duplicate_count > 0:
+                    result.add_error(f"Found {duplicate_count} true duplicate records (same business key, effective date, and SCD attributes)")
+            else:
+                # Fallback: check for exact duplicates (all columns)
+                duplicate_count = (df.count() - df.dropDuplicates().count())
+                
+                if duplicate_count > 0:
+                    result.add_error(f"Found {duplicate_count} exact duplicate records")
+        else:
+            # If no effective date column, check for exact duplicates (all columns)
+            duplicate_count = (df.count() - df.dropDuplicates().count())
+            
+            if duplicate_count > 0:
+                result.add_error(f"Found {duplicate_count} exact duplicate records")
     
     def _validate_data_types(self, df: DataFrame, result: ValidationResult) -> None:
         """Validate data types for key columns."""

@@ -13,7 +13,7 @@
 
 # Import the library
 import sys
-sys.path.append('/Workspace/Users/your_username/dimensional_processing')  # Update this path
+sys.path.append('/Workspace/Repos/dev/data-accel/src/') # Update this path
 
 from libraries.dimensional_processing.scd_type2.scd_processor import SCDProcessor
 from libraries.dimensional_processing.common.config import SCDConfig
@@ -52,6 +52,50 @@ schema = StructType([
 df = spark.createDataFrame(data, schema)
 print(f"✅ Created test data with {df.count()} records")
 df.show()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Create Target Table
+
+# COMMAND ----------
+
+# Create the target dimension table with proper SCD schema
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
+
+def create_target_table():
+    """Create the target dimension table with SCD Type 2 schema."""
+    
+    schema = StructType([
+        StructField("customer_sk", StringType(), False),  # Surrogate key
+        StructField("customer_id", StringType(), True),   # Business key
+        StructField("name", StringType(), True),          # SCD attributes
+        StructField("email", StringType(), True),
+        StructField("address", StringType(), True),
+        StructField("scd_hash", StringType(), True),      # SCD metadata
+        StructField("effective_start_ts_utc", TimestampType(), True),
+        StructField("effective_end_ts_utc", TimestampType(), True),
+        StructField("is_current", StringType(), True),
+        StructField("created_ts_utc", TimestampType(), True),  # Audit columns
+        StructField("modified_ts_utc", TimestampType(), True),
+        StructField("_error_flag", StringType(), True),    # Error handling
+        StructField("_error_message", StringType(), True)
+    ])
+    
+    # Create empty DataFrame with the schema
+    empty_df = spark.createDataFrame([], schema)
+    
+    # Write as Delta table
+    empty_df.write \
+        .format("delta") \
+        .mode("overwrite") \
+        .option("overwriteSchema", "true") \
+        .saveAsTable("quick_test.customer_dim")
+    
+    print("✅ Target dimension table created successfully")
+
+# Create the target table
+create_target_table()
 
 # COMMAND ----------
 
