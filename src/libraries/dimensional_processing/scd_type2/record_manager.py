@@ -245,7 +245,8 @@ class RecordManager:
         
         logger.info("🔍 DEBUG: About to insert new records")
         logger.info(f"🔍 DEBUG: Merge condition: {merge_condition}")
-        logger.info(f"🔍 DEBUG: Target table count before merge: {self.delta_table.toDF().count()}")
+        before_count = self.delta_table.toDF().count()
+        logger.info(f"🔍 DEBUG: Target table count before merge: {before_count}")
         logger.info(f"🔍 DEBUG: Source DataFrame count: {insert_df.count()}")
         
         # Insert new records
@@ -254,11 +255,17 @@ class RecordManager:
          .whenNotMatchedInsertAll()
          .execute())
         
-        logger.info(f"🔍 DEBUG: Target table count after merge: {self.delta_table.toDF().count()}")
+        after_count = self.delta_table.toDF().count()
+        logger.info(f"🔍 DEBUG: Target table count after merge: {after_count}")
+        
+        # Calculate actual inserted records
+        actual_inserted = after_count - before_count
+        logger.info(f"🔍 DEBUG: ✅ Actually inserted {actual_inserted} new records (before: {before_count}, after: {after_count})")
         
         logger.info("🔍 DEBUG: Finished inserting new records")
         
-        record_count = insert_df.count()
+        # Return the actual number of records inserted
+        record_count = insert_df.count()  # This is the number of records we attempted to insert
         logger.info(f"Inserted {record_count} new records")
         logger.info("🏁 EXIT: _insert_new_records")
         return record_count
@@ -290,12 +297,23 @@ class RecordManager:
         
         # First, expire existing records
         logger.info("🔍 DEBUG: About to expire existing records")
-        self._expire_existing_records(changed_records_df)
+        # Create a proper copy of the DataFrame to avoid corruption
+        # We need to cache and create a new DataFrame to avoid Spark optimization issues
+        changed_records_df.cache()
+        changed_records_copy = changed_records_df.select("*")
+        self._expire_existing_records(changed_records_copy)
         logger.info("🔍 DEBUG: Finished expiring existing records")
         
         # DEBUG: Check if changed_records_df is still valid after expiring
         logger.info(f"🔍 DEBUG: Changed records count after expiring: {changed_records_df.count()}")
         logger.info(f"🔍 DEBUG: Changed records columns after expiring: {changed_records_df.columns}")
+        
+        # DEBUG: Verify the DataFrame still has the expected data
+        if changed_records_df.count() > 0:
+            logger.info("🔍 DEBUG: ✅ DataFrame is still valid after expiring - showing sample data:")
+            changed_records_df.select(*self.config.business_key_columns, self.config.scd_hash_column, self.config.effective_start_column).show(5, truncate=False)
+        else:
+            logger.error("🔍 DEBUG: ❌ DataFrame became empty after expiring - this indicates the fix didn't work!")
         
         # Then, insert new versions
         logger.info("🔍 DEBUG: About to insert new versions")
