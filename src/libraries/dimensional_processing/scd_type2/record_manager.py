@@ -87,7 +87,7 @@ class RecordManager:
         # Always clean the DataFrames, even if empty, to ensure consistent column structure
         new_records = self._clean_joined_dataframe(new_records_raw, "source")
         unchanged_records = unchanged_records_raw  # Keep unchanged records as-is since they don't need processing
-        changed_records = self._clean_joined_dataframe(changed_records_raw, "source")
+        changed_records = self._clean_joined_dataframe_for_changes(changed_records_raw, "source")
         
         change_plan = {
             "new_records": new_records,
@@ -422,6 +422,84 @@ class RecordManager:
         logger.info(f"Cleaning DataFrame with {len(clean_columns)} columns for alias_prefix: {alias_prefix}")
         cleaned_df = joined_df.select(*clean_columns)
         logger.info(f"Cleaned DataFrame has {cleaned_df.count()} records")
+        
+        return cleaned_df
+    
+    def _clean_joined_dataframe_for_changes(self, joined_df: DataFrame, alias_prefix: str) -> DataFrame:
+        """
+        Clean joined DataFrame for changed records (excludes surrogate key).
+        
+        Args:
+            joined_df: DataFrame with joined data
+            alias_prefix: Prefix to use for column selection ("source" or "current")
+            
+        Returns:
+            Cleaned DataFrame without surrogate key (will be generated later)
+        """
+        # Handle empty DataFrames by creating an empty DataFrame with the correct schema
+        if joined_df.isEmpty():
+            logger.info(f"Empty DataFrame provided for cleaning changed records with alias_prefix: {alias_prefix}")
+            # Create an empty DataFrame with the correct schema (without surrogate key)
+            from pyspark.sql.types import StructType, StructField, StringType, TimestampType
+            
+            # Build the schema for the cleaned DataFrame
+            schema_fields = []
+            
+            # Add business key columns
+            for bk_col in self.config.business_key_columns:
+                schema_fields.append(StructField(bk_col, StringType(), True))
+            
+            # Add SCD columns (excluding any that are already in business key columns)
+            for scd_col in self.config.scd_columns:
+                if scd_col not in self.config.business_key_columns:
+                    schema_fields.append(StructField(scd_col, StringType(), True))
+            
+            # Add SCD metadata columns (excluding surrogate key)
+            schema_fields.extend([
+                StructField(self.config.scd_hash_column, StringType(), True),
+                StructField(self.config.effective_start_column, TimestampType(), True),
+                StructField(self.config.effective_end_column, TimestampType(), True),
+                StructField(self.config.is_current_column, StringType(), True),
+                StructField(self.config.created_ts_column, TimestampType(), True),
+                StructField(self.config.modified_ts_column, TimestampType(), True),
+                StructField(self.config.error_flag_column, StringType(), True),
+                StructField(self.config.error_message_column, StringType(), True)
+                # Note: No surrogate key field - will be generated later
+            ])
+            
+            schema = StructType(schema_fields)
+            empty_df = joined_df.sparkSession.createDataFrame([], schema)
+            logger.info(f"Created empty DataFrame with correct schema for changed records")
+            return empty_df
+        
+        # Build list of columns to select from the specified alias (excluding surrogate key)
+        clean_columns = []
+        
+        # Add business key columns
+        for bk_col in self.config.business_key_columns:
+            clean_columns.append(col(f"{alias_prefix}.{bk_col}").alias(bk_col))
+        
+        # Add SCD columns (excluding any that are already in business key columns)
+        for scd_col in self.config.scd_columns:
+            if scd_col not in self.config.business_key_columns:
+                clean_columns.append(col(f"{alias_prefix}.{scd_col}").alias(scd_col))
+        
+        # Add SCD metadata columns (excluding surrogate key)
+        clean_columns.extend([
+            col(f"{alias_prefix}.{self.config.scd_hash_column}").alias(self.config.scd_hash_column),
+            col(f"{alias_prefix}.{self.config.effective_start_column}").alias(self.config.effective_start_column),
+            col(f"{alias_prefix}.{self.config.effective_end_column}").alias(self.config.effective_end_column),
+            col(f"{alias_prefix}.{self.config.is_current_column}").alias(self.config.is_current_column),
+            col(f"{alias_prefix}.{self.config.created_ts_column}").alias(self.config.created_ts_column),
+            col(f"{alias_prefix}.{self.config.modified_ts_column}").alias(self.config.modified_ts_column),
+            col(f"{alias_prefix}.{self.config.error_flag_column}").alias(self.config.error_flag_column),
+            col(f"{alias_prefix}.{self.config.error_message_column}").alias(self.config.error_message_column)
+            # Note: No surrogate key - will be generated in _insert_new_versions
+        ])
+        
+        logger.info(f"Cleaning DataFrame for changes with {len(clean_columns)} columns for alias_prefix: {alias_prefix}")
+        cleaned_df = joined_df.select(*clean_columns)
+        logger.info(f"Cleaned DataFrame for changes has {cleaned_df.count()} records")
         
         return cleaned_df
     
