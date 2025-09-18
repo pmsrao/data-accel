@@ -267,10 +267,10 @@ class RecordManager:
             logger.info(f"Dropping existing surrogate key column: {self.config.surrogate_key_column}")
             changed_records_df = changed_records_df.drop(self.config.surrogate_key_column)
         
-        # Generate new surrogate keys for the new versions
+        # Generate new surrogate keys for the new versions (cast to StringType for compatibility)
         new_versions_df = changed_records_df.withColumn(
             self.config.surrogate_key_column,
-            monotonically_increasing_id()
+            monotonically_increasing_id().cast("string")
         )
         
         # For new versions, we need to insert them directly since they have different surrogate keys

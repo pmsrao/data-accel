@@ -175,13 +175,15 @@ class DateManager:
         Returns:
             DataFrame with surrogate keys added
         """
+        from pyspark.sql.functions import col
+        
         logger.info("Generating surrogate keys for new records")
         
-        # Generate surrogate keys using monotonically_increasing_id
-        # This creates unique IDs for each record
+        # Generate surrogate keys using monotonically_increasing_id and cast to StringType
+        # This creates unique IDs for each record and ensures type compatibility
         df_with_sk = df.withColumn(
             self.config.surrogate_key_column,
-            monotonically_increasing_id()
+            monotonically_increasing_id().cast("string")
         )
         
         logger.info(f"Generated surrogate keys for {df_with_sk.count()} records")
