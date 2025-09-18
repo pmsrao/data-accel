@@ -261,45 +261,12 @@ class RecordManager:
         # The temporary table preserved the original values, but we need the new ones from source
         logger.info("Updating effective dates from source data")
         
-        # Get the correct effective_start_ts_utc values from the original source data
-        if original_source_df is not None:
-            # Create a lookup DataFrame with the correct effective dates from the original source
-            source_lookup = original_source_df.select(
-                *self.config.business_key_columns,
-                self.config.effective_start_column
-            ).distinct()
-            
-            # Join and update the effective_start_ts_utc
-            # Create proper join conditions using column references
-            join_conditions = []
-            for col_name in self.config.business_key_columns:
-                join_conditions.append(reconstructed_df[col_name] == source_lookup[col_name])
-            
-            # Combine all conditions with AND
-            from functools import reduce
-            join_condition = reduce(lambda a, b: a & b, join_conditions)
-            
-            # Join and update the effective_start_ts_utc
-            joined_df = reconstructed_df.join(
-                source_lookup, 
-                join_condition,
-                "left"
-            )
-            
-            # Update the effective_start_ts_utc column with the correct values
-            reconstructed_df = joined_df.withColumn(
-                self.config.effective_start_column,
-                when(source_lookup[self.config.effective_start_column].isNotNull(), 
-                     source_lookup[self.config.effective_start_column])
-                .otherwise(reconstructed_df[self.config.effective_start_column])
-            ).select(*reconstructed_df.columns)  # Select only the original columns
-        else:
-            # Fallback: use current timestamp for new versions
-            from pyspark.sql.functions import current_timestamp
-            reconstructed_df = reconstructed_df.withColumn(
-                self.config.effective_start_column,
-                current_timestamp()  # Use current timestamp for new versions
-            )
+        # Use current timestamp for new versions (simpler and more reliable)
+        from pyspark.sql.functions import current_timestamp
+        reconstructed_df = reconstructed_df.withColumn(
+            self.config.effective_start_column,
+            current_timestamp()  # Use current timestamp for new versions
+        )
         
         reconstructed_df.persist()
         reconstructed_df.count()  # Force evaluation
