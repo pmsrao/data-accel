@@ -73,22 +73,20 @@ class RecordManager:
             "full_outer"
         )
         
-        # Categorize records
+        # Categorize records using the joined DataFrame
         # Check if current record exists by checking if the surrogate key is null
-        new_records = joined_df.filter(col(f"current.{self.config.surrogate_key_column}").isNull())
-        unchanged_records = joined_df.filter(
+        new_records_raw = joined_df.filter(col(f"current.{self.config.surrogate_key_column}").isNull())
+        unchanged_records_raw = joined_df.filter(
             col(f"source.{self.config.scd_hash_column}") == col(f"current.{self.config.scd_hash_column}")
         )
-        changed_records = joined_df.filter(
+        changed_records_raw = joined_df.filter(
             col(f"source.{self.config.scd_hash_column}") != col(f"current.{self.config.scd_hash_column}")
         )
         
-        # For new records, we only need the source data (no current data exists)
-        # For changed records, we need to clean up the DataFrame to avoid ambiguity
-        if not new_records.isEmpty():
-            new_records = self._clean_joined_dataframe(new_records, "source")
-        if not changed_records.isEmpty():
-            changed_records = self._clean_joined_dataframe(changed_records, "source")
+        # Clean the DataFrames to avoid ambiguity
+        new_records = self._clean_joined_dataframe(new_records_raw, "source") if not new_records_raw.isEmpty() else new_records_raw
+        unchanged_records = unchanged_records_raw  # Keep unchanged records as-is since they don't need processing
+        changed_records = self._clean_joined_dataframe(changed_records_raw, "source") if not changed_records_raw.isEmpty() else changed_records_raw
         
         change_plan = {
             "new_records": new_records,
