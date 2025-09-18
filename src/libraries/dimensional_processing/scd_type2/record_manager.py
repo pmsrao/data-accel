@@ -185,6 +185,8 @@ class RecordManager:
             
             # Process changed records
             logger.info("🔍 DEBUG: About to process changed records")
+            logger.info(f"🔍 DEBUG: Changed records DataFrame in change plan: {change_plan['changed_records'].count()} records")
+            logger.info(f"🔍 DEBUG: Changed records DataFrame columns: {change_plan['changed_records'].columns}")
             updated_count = self._process_changed_records(change_plan["changed_records"])
             logger.info(f"🔍 DEBUG: Changed records processed, count: {updated_count}")
             metrics.existing_records_updated = updated_count
@@ -242,11 +244,17 @@ class RecordManager:
         merge_condition = reduce(lambda a, b: a & b, merge_conditions)
         
         logger.info("🔍 DEBUG: About to insert new records")
+        logger.info(f"🔍 DEBUG: Merge condition: {merge_condition}")
+        logger.info(f"🔍 DEBUG: Target table count before merge: {self.delta_table.toDF().count()}")
+        logger.info(f"🔍 DEBUG: Source DataFrame count: {insert_df.count()}")
+        
         # Insert new records
         (self.delta_table.alias("target")
          .merge(insert_df.alias("source"), merge_condition)
          .whenNotMatchedInsertAll()
          .execute())
+        
+        logger.info(f"🔍 DEBUG: Target table count after merge: {self.delta_table.toDF().count()}")
         
         logger.info("🔍 DEBUG: Finished inserting new records")
         
@@ -284,6 +292,10 @@ class RecordManager:
         logger.info("🔍 DEBUG: About to expire existing records")
         self._expire_existing_records(changed_records_df)
         logger.info("🔍 DEBUG: Finished expiring existing records")
+        
+        # DEBUG: Check if changed_records_df is still valid after expiring
+        logger.info(f"🔍 DEBUG: Changed records count after expiring: {changed_records_df.count()}")
+        logger.info(f"🔍 DEBUG: Changed records columns after expiring: {changed_records_df.columns}")
         
         # Then, insert new versions
         logger.info("🔍 DEBUG: About to insert new versions")
