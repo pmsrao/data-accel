@@ -176,20 +176,21 @@ class RecordManager:
             changed_records_df: DataFrame with changed records
             
         Returns:
-            Number of records processed
+            Number of new versions created
         """
         if changed_records_df.isEmpty():
             return 0
+        
+        record_count = changed_records_df.count()
         
         # First, expire existing records
         self._expire_existing_records(changed_records_df)
         
         # Then, insert new versions
-        self._insert_new_versions(changed_records_df)
+        new_versions_count = self._insert_new_versions(changed_records_df)
         
-        record_count = changed_records_df.count()
-        logger.info(f"Processed {record_count} changed records")
-        return record_count
+        logger.info(f"Processed {record_count} changed records, created {new_versions_count} new versions")
+        return new_versions_count
     
     def _process_unchanged_records(self, unchanged_records_df: DataFrame) -> int:
         """
@@ -217,6 +218,8 @@ class RecordManager:
         Args:
             changed_records_df: DataFrame with changed records
         """
+        from pyspark.sql.functions import expr
+        
         # Build expire condition using Column expressions with explicit references
         expire_conditions = []
         for bk_col in self.config.business_key_columns:
@@ -228,10 +231,17 @@ class RecordManager:
         # Combine all conditions with AND
         expire_condition = reduce(lambda a, b: a & b, expire_conditions)
         
+        # Set effective end date to be one second before the new record's effective start date
+        # This ensures proper temporal ordering with minimal time difference
+        from pyspark.sql.functions import col as spark_col, expr
+        
+        # Use expr to subtract 1 second from the timestamp
+        expire_end_date = expr(f"source.{self.config.effective_start_column} - interval 1 second")
+        
         (self.delta_table.alias("target")
          .merge(changed_records_df.alias("source"), expire_condition)
          .whenMatchedUpdate(set={
-             self.config.effective_end_column: col(f"source.{self.config.effective_start_column}"),
+             self.config.effective_end_column: expire_end_date,
              self.config.is_current_column: lit("N"),
              self.config.modified_ts_column: current_timestamp()
          })
@@ -239,29 +249,32 @@ class RecordManager:
         
         logger.info("Expired existing records for changed records")
     
-    def _insert_new_versions(self, changed_records_df: DataFrame) -> None:
+    def _insert_new_versions(self, changed_records_df: DataFrame) -> int:
         """
         Insert new versions of changed records.
         
         Args:
             changed_records_df: DataFrame with changed records
+            
+        Returns:
+            Number of new versions inserted
         """
         # The DataFrame is already cleaned and has unambiguous column references
         new_versions_df = changed_records_df
         
-        # Build merge condition with explicit column references
-        merge_conditions = []
-        for bk_col in self.config.business_key_columns:
-            merge_conditions.append(col(f"target.{bk_col}") == col(f"source.{bk_col}"))
+        # For new versions, we need to insert them directly since they have different surrogate keys
+        # We can't use merge with whenNotMatched because the business keys will match
+        # Instead, we'll insert them directly as new records
         
-        merge_condition = reduce(lambda a, b: a & b, merge_conditions)
+        # Insert new versions directly
+        new_versions_df.write \
+            .format("delta") \
+            .mode("append") \
+            .saveAsTable(self.config.target_table)
         
-        (self.delta_table.alias("target")
-         .merge(new_versions_df.alias("source"), merge_condition)
-         .whenNotMatchedInsertAll()
-         .execute())
-        
-        logger.info("Inserted new versions for changed records")
+        record_count = new_versions_df.count()
+        logger.info(f"Inserted {record_count} new versions for changed records")
+        return record_count
     
     def _build_source_columns(self) -> list:
         """
