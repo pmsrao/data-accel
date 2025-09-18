@@ -261,8 +261,13 @@ class RecordManager:
         """
         from pyspark.sql.functions import monotonically_increasing_id
         
-        # The DataFrame is already cleaned and has unambiguous column references
-        # But we need to generate new surrogate keys for the new versions
+        # First, ensure we don't have any existing surrogate key column
+        # Drop the surrogate key column if it exists to avoid conflicts
+        if self.config.surrogate_key_column in changed_records_df.columns:
+            logger.info(f"Dropping existing surrogate key column: {self.config.surrogate_key_column}")
+            changed_records_df = changed_records_df.drop(self.config.surrogate_key_column)
+        
+        # Generate new surrogate keys for the new versions
         new_versions_df = changed_records_df.withColumn(
             self.config.surrogate_key_column,
             monotonically_increasing_id()
