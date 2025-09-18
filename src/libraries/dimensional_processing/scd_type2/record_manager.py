@@ -298,23 +298,27 @@ class RecordManager:
         # First, expire existing records
         logger.info("🔍 DEBUG: About to expire existing records")
         
-        # CRITICAL: Create a materialized copy to avoid any Spark optimization issues
-        # Force evaluation by collecting and recreating the DataFrame
+        # CRITICAL: Use persist() to avoid Spark lazy evaluation issues
+        # The problem is that Spark's lazy evaluation causes the original DataFrame to be re-evaluated
+        # after the merge operation, which makes it empty because the underlying data changed
+        
         logger.info(f"🔍 DEBUG: Original DataFrame ID: {id(changed_records_df)}")
         logger.info(f"🔍 DEBUG: Original DataFrame count: {changed_records_df.count()}")
         
-        # Materialize the DataFrame to ensure it's completely independent
-        changed_records_data = changed_records_df.collect()
-        logger.info(f"🔍 DEBUG: Collected {len(changed_records_data)} rows from original DataFrame")
+        # Persist the original DataFrame to avoid lazy evaluation issues
+        changed_records_df.persist()
+        changed_records_df.count()  # Force evaluation
+        logger.info(f"🔍 DEBUG: Original DataFrame persisted and materialized")
         
-        # Create a completely new DataFrame from the collected data
-        from pyspark.sql import SparkSession
-        spark = SparkSession.getActiveSession()
-        changed_records_copy = spark.createDataFrame(changed_records_data, changed_records_df.schema)
+        # Create a completely independent copy using select() and persist()
+        changed_records_copy = changed_records_df.select("*")
+        changed_records_copy.persist()
+        changed_records_copy.count()  # Force evaluation
+        logger.info(f"🔍 DEBUG: Copy DataFrame persisted and materialized")
         
-        logger.info(f"🔍 DEBUG: New DataFrame ID: {id(changed_records_copy)}")
-        logger.info(f"🔍 DEBUG: New DataFrame count: {changed_records_copy.count()}")
-        logger.info(f"🔍 DEBUG: New DataFrame is cached: {changed_records_copy.is_cached}")
+        logger.info(f"🔍 DEBUG: Copy DataFrame ID: {id(changed_records_copy)}")
+        logger.info(f"🔍 DEBUG: Copy DataFrame count: {changed_records_copy.count()}")
+        logger.info(f"🔍 DEBUG: Copy DataFrame is cached: {changed_records_copy.is_cached}")
         
         # Verify the original DataFrame is still intact
         logger.info(f"🔍 DEBUG: Original DataFrame count after copy creation: {changed_records_df.count()}")
@@ -322,16 +326,15 @@ class RecordManager:
         self._expire_existing_records(changed_records_copy)
         logger.info("🔍 DEBUG: Finished expiring existing records")
         
-        # DEBUG: Check if changed_records_df is still valid after expiring
-        logger.info(f"🔍 DEBUG: Changed records count after expiring: {changed_records_df.count()}")
-        logger.info(f"🔍 DEBUG: Changed records columns after expiring: {changed_records_df.columns}")
+        # CRITICAL: Check if changed_records_df is still valid after expiring
+        final_count = changed_records_df.count()
+        logger.info(f"🔍 DEBUG: Changed records count after expiring: {final_count}")
         
-        # DEBUG: Verify the DataFrame still has the expected data
-        if changed_records_df.count() > 0:
+        if final_count > 0:
             logger.info("🔍 DEBUG: ✅ DataFrame is still valid after expiring - showing sample data:")
             changed_records_df.select(*self.config.business_key_columns, self.config.scd_hash_column, self.config.effective_start_column).show(5, truncate=False)
         else:
-            logger.error("🔍 DEBUG: ❌ DataFrame became empty after expiring - this indicates the fix didn't work!")
+            logger.error("🔍 DEBUG: ❌ DataFrame became empty after expiring - persist() fix didn't work!")
         
         # Then, insert new versions
         logger.info("🔍 DEBUG: About to insert new versions")
@@ -402,19 +405,9 @@ class RecordManager:
         logger.info(f"🔍 DEBUG: Expire condition: {expire_condition}")
         logger.info(f"🔍 DEBUG: Expire end date expression: source.{self.config.effective_start_column} - interval 1 second")
         
-        # DEBUG: Check DataFrame state before merge
-        logger.info(f"🔍 DEBUG: Before merge - DataFrame count: {changed_records_df.count()}")
-        logger.info(f"🔍 DEBUG: Before merge - DataFrame ID: {id(changed_records_df)}")
-        
-        # CRITICAL POINT: This is where corruption might happen
-        # Let's create a completely separate DataFrame for the merge operation
-        logger.info("🔍 DEBUG: Creating separate DataFrame for merge operation")
-        merge_df = changed_records_df.select("*")
-        logger.info(f"🔍 DEBUG: Merge DataFrame ID: {id(merge_df)}")
-        logger.info(f"🔍 DEBUG: Merge DataFrame count: {merge_df.count()}")
-        
+        # Execute merge to expire existing records
         (self.delta_table.alias("target")
-         .merge(merge_df.alias("source"), expire_condition)
+         .merge(changed_records_df.alias("source"), expire_condition)
          .whenMatchedUpdate(set={
              self.config.effective_end_column: expire_end_date,
              self.config.is_current_column: lit("N"),
@@ -422,19 +415,11 @@ class RecordManager:
          })
          .execute())
         
-        # DEBUG: Check if the original DataFrame was affected by the merge
-        logger.info(f"🔍 DEBUG: After merge - Original DataFrame count: {changed_records_df.count()}")
-        logger.info(f"🔍 DEBUG: After merge - Original DataFrame ID: {id(changed_records_df)}")
-        logger.info(f"🔍 DEBUG: After merge - Merge DataFrame count: {merge_df.count()}")
-        logger.info(f"🔍 DEBUG: After merge - Merge DataFrame ID: {id(merge_df)}")
-        
         logger.info("🔍 DEBUG: Finished executing merge for expiring records")
         logger.info("Expired existing records for changed records")
         
-        # DEBUG: Check if the input DataFrame was affected by the merge operation
+        # CRITICAL: Check if the input DataFrame was affected by the merge operation
         logger.info(f"🔍 DEBUG: After merge - Input DataFrame count: {changed_records_df.count()}")
-        logger.info(f"🔍 DEBUG: After merge - Input DataFrame ID: {id(changed_records_df)}")
-        logger.info(f"🔍 DEBUG: After merge - Input DataFrame is cached: {changed_records_df.is_cached}")
         
         logger.info("🏁 EXIT: _expire_existing_records")
     
@@ -711,13 +696,9 @@ class RecordManager:
         ])
         
         logger.info(f"Cleaning DataFrame for changes with {len(clean_columns)} columns for alias_prefix: {alias_prefix}")
-        logger.info(f"🔍 DEBUG: Input joined_df ID: {id(joined_df)}")
-        logger.info(f"🔍 DEBUG: Input joined_df count: {joined_df.count()}")
         
         cleaned_df = joined_df.select(*clean_columns)
         
-        logger.info(f"🔍 DEBUG: Output cleaned_df ID: {id(cleaned_df)}")
-        logger.info(f"🔍 DEBUG: Output cleaned_df count: {cleaned_df.count()}")
         logger.info(f"Cleaned DataFrame for changes has {cleaned_df.count()} records")
         
         return cleaned_df
