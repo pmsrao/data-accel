@@ -152,16 +152,16 @@ class RecordManager:
         # The DataFrame is already cleaned and has unambiguous column references
         insert_df = new_records_df
         
-        # Build merge condition for cleaned DataFrame (no source. prefix)
+        # Build merge condition with explicit column references
         merge_conditions = []
         for bk_col in self.config.business_key_columns:
-            merge_conditions.append(col(f"target.{bk_col}") == col(bk_col))
+            merge_conditions.append(col(f"target.{bk_col}") == col(f"source.{bk_col}"))
         
         merge_condition = reduce(lambda a, b: a & b, merge_conditions)
         
         # Insert new records
         (self.delta_table.alias("target")
-         .merge(insert_df, merge_condition)
+         .merge(insert_df.alias("source"), merge_condition)
          .whenNotMatchedInsertAll()
          .execute())
         
@@ -218,11 +218,10 @@ class RecordManager:
         Args:
             changed_records_df: DataFrame with changed records
         """
-        # Build expire condition using Column expressions
-        # Note: changed_records_df has been cleaned and doesn't have source. prefix
+        # Build expire condition using Column expressions with explicit references
         expire_conditions = []
         for bk_col in self.config.business_key_columns:
-            expire_conditions.append(col(f"target.{bk_col}") == col(bk_col))
+            expire_conditions.append(col(f"target.{bk_col}") == col(f"source.{bk_col}"))
         
         # Add condition for current records
         expire_conditions.append(col(f"target.{self.config.is_current_column}") == lit("Y"))
@@ -231,9 +230,9 @@ class RecordManager:
         expire_condition = reduce(lambda a, b: a & b, expire_conditions)
         
         (self.delta_table.alias("target")
-         .merge(changed_records_df, expire_condition)
+         .merge(changed_records_df.alias("source"), expire_condition)
          .whenMatchedUpdate(set={
-             self.config.effective_end_column: col(self.config.effective_start_column),
+             self.config.effective_end_column: col(f"source.{self.config.effective_start_column}"),
              self.config.is_current_column: lit("N"),
              self.config.modified_ts_column: current_timestamp()
          })
@@ -251,15 +250,15 @@ class RecordManager:
         # The DataFrame is already cleaned and has unambiguous column references
         new_versions_df = changed_records_df
         
-        # Build merge condition for cleaned DataFrame (no source. prefix)
+        # Build merge condition with explicit column references
         merge_conditions = []
         for bk_col in self.config.business_key_columns:
-            merge_conditions.append(col(f"target.{bk_col}") == col(bk_col))
+            merge_conditions.append(col(f"target.{bk_col}") == col(f"source.{bk_col}"))
         
         merge_condition = reduce(lambda a, b: a & b, merge_conditions)
         
         (self.delta_table.alias("target")
-         .merge(new_versions_df, merge_condition)
+         .merge(new_versions_df.alias("source"), merge_condition)
          .whenNotMatchedInsertAll()
          .execute())
         
