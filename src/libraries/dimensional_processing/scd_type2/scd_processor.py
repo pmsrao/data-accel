@@ -106,8 +106,12 @@ class SCDProcessor:
         """
         logger.info("Preparing source data with SCD metadata")
         
-        # Step 0: Deduplicate source data to prevent merge conflicts
-        deduplicated_df = self._deduplicate_source_data(source_df)
+        # Step 0: Deduplicate source data to prevent merge conflicts (only if enabled)
+        if self.config.enable_source_deduplication:
+            deduplicated_df = self._deduplicate_source_data(source_df)
+        else:
+            deduplicated_df = source_df
+            logger.info("Source deduplication is disabled - using original source data")
         
         # Step 1: Compute SCD hash
         df_with_hash = self.hash_manager.compute_scd_hash(deduplicated_df)
@@ -144,11 +148,6 @@ class SCDProcessor:
         Returns:
             Deduplicated DataFrame
         """
-        # Skip deduplication if disabled
-        if not self.config.enable_source_deduplication:
-            logger.info("Source deduplication is disabled")
-            return source_df
-        
         from pyspark.sql.functions import row_number, col
         from pyspark.sql.window import Window
         

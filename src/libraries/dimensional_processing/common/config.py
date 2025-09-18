@@ -43,7 +43,7 @@ class SCDConfig:
     hash_algorithm: str = "sha256"
     
     # Deduplication settings
-    enable_source_deduplication: bool = True
+    enable_source_deduplication: bool = False  # Disabled by default - use HistoricalDataDeduplicator instead
     deduplication_strategy: str = "latest"  # "latest", "earliest", "error"
     
     # Error handling
