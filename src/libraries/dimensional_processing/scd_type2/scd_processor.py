@@ -88,7 +88,7 @@ class SCDProcessor:
             change_plan = self.record_manager.create_change_plan(prepared_df, current_records)
             
             # Step 6: Execute changes
-            execution_result = self.record_manager.execute_change_plan(change_plan, source_data)
+            execution_result = self.record_manager.execute_change_plan(change_plan, prepared_df)
             
             # Step 7: Optimize table if enabled
             if self.config.enable_optimization:

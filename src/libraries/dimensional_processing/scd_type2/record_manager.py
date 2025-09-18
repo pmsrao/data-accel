@@ -270,16 +270,24 @@ class RecordManager:
             ).distinct()
             
             # Join and update the effective_start_ts_utc
+            # Create proper join conditions using column references
+            join_conditions = []
+            for col_name in self.config.business_key_columns:
+                join_conditions.append(reconstructed_df[col_name] == source_lookup[col_name])
+            
+            # Combine all conditions with AND
+            from functools import reduce
+            join_condition = reduce(lambda a, b: a & b, join_conditions)
+            
             reconstructed_df = reconstructed_df.join(
                 source_lookup, 
-                [col(f"reconstructed_df.{col_name}") == col(f"source_lookup.{col_name}") 
-                 for col_name in self.config.business_key_columns],
+                join_condition,
                 "left"
             ).withColumn(
                 self.config.effective_start_column,
-                when(col(f"source_lookup.{self.config.effective_start_column}").isNotNull(), 
-                     col(f"source_lookup.{self.config.effective_start_column}"))
-                .otherwise(col(f"reconstructed_df.{self.config.effective_start_column}"))
+                when(source_lookup[self.config.effective_start_column].isNotNull(), 
+                     source_lookup[self.config.effective_start_column])
+                .otherwise(reconstructed_df[self.config.effective_start_column])
             ).drop(*[f"source_lookup.{col_name}" for col_name in self.config.business_key_columns + [self.config.effective_start_column]])
         else:
             # Fallback: use current timestamp for new versions
