@@ -298,47 +298,39 @@ class RecordManager:
         # First, expire existing records
         logger.info("🔍 DEBUG: About to expire existing records")
         
-        # CRITICAL: Use persist() to avoid Spark lazy evaluation issues
-        # The problem is that Spark's lazy evaluation causes the original DataFrame to be re-evaluated
-        # after the merge operation, which makes it empty because the underlying data changed
+        # CRITICAL: Use temporary table to avoid DataFrame corruption after merge
+        # The issue is that even with persist(), the DataFrame gets corrupted after merge
+        # So we'll write to a temp table and read back after the merge
         
-        logger.info(f"🔍 DEBUG: Original DataFrame ID: {id(changed_records_df)}")
         logger.info(f"🔍 DEBUG: Original DataFrame count: {changed_records_df.count()}")
         
-        # Persist the original DataFrame to avoid lazy evaluation issues
-        changed_records_df.persist()
-        changed_records_df.count()  # Force evaluation
-        logger.info(f"🔍 DEBUG: Original DataFrame persisted and materialized")
+        # Create a temporary table to store the data
+        temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
+        changed_records_df.write.mode("overwrite").saveAsTable(temp_table_name)
+        logger.info(f"🔍 DEBUG: Stored data in temporary table: {temp_table_name}")
         
-        # Create a completely independent copy using select() and persist()
-        changed_records_copy = changed_records_df.select("*")
-        changed_records_copy.persist()
-        changed_records_copy.count()  # Force evaluation
-        logger.info(f"🔍 DEBUG: Copy DataFrame persisted and materialized")
-        
-        logger.info(f"🔍 DEBUG: Copy DataFrame ID: {id(changed_records_copy)}")
-        logger.info(f"🔍 DEBUG: Copy DataFrame count: {changed_records_copy.count()}")
-        logger.info(f"🔍 DEBUG: Copy DataFrame is cached: {changed_records_copy.is_cached}")
-        
-        # Verify the original DataFrame is still intact
-        logger.info(f"🔍 DEBUG: Original DataFrame count after copy creation: {changed_records_df.count()}")
-        
-        self._expire_existing_records(changed_records_copy)
+        # Execute the merge operation
+        self._expire_existing_records(changed_records_df)
         logger.info("🔍 DEBUG: Finished expiring existing records")
         
-        # CRITICAL: Check if changed_records_df is still valid after expiring
-        final_count = changed_records_df.count()
-        logger.info(f"🔍 DEBUG: Changed records count after expiring: {final_count}")
+        # Read back the data from temporary table
+        from pyspark.sql import SparkSession
+        spark = SparkSession.getActiveSession()
+        reconstructed_df = spark.table(temp_table_name)
+        reconstructed_df.persist()
+        reconstructed_df.count()  # Force evaluation
         
-        if final_count > 0:
-            logger.info("🔍 DEBUG: ✅ DataFrame is still valid after expiring - showing sample data:")
-            changed_records_df.select(*self.config.business_key_columns, self.config.scd_hash_column, self.config.effective_start_column).show(5, truncate=False)
-        else:
-            logger.error("🔍 DEBUG: ❌ DataFrame became empty after expiring - persist() fix didn't work!")
+        logger.info(f"🔍 DEBUG: Reconstructed DataFrame count: {reconstructed_df.count()}")
+        logger.info("🔍 DEBUG: ✅ DataFrame reconstructed successfully - showing sample data:")
+        reconstructed_df.select(*self.config.business_key_columns, self.config.scd_hash_column, self.config.effective_start_column).show(5, truncate=False)
         
-        # Then, insert new versions
+        # Clean up temporary table
+        spark.sql(f"DROP TABLE IF EXISTS {temp_table_name}")
+        logger.info(f"🔍 DEBUG: Cleaned up temporary table: {temp_table_name}")
+        
+        # Then, insert new versions using the reconstructed DataFrame
         logger.info("🔍 DEBUG: About to insert new versions")
-        new_versions_count = self._insert_new_versions(changed_records_df)
+        new_versions_count = self._insert_new_versions(reconstructed_df)
         logger.info(f"🔍 DEBUG: Finished inserting {new_versions_count} new versions")
         
         logger.info(f"Processed {record_count} changed records, created {new_versions_count} new versions")
