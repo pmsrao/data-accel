@@ -325,12 +325,12 @@ class RecordManager:
         # Combine all conditions with AND
         expire_condition = reduce(lambda a, b: a & b, expire_conditions)
         
-        # Set effective end date to be one second before the current timestamp
+        # Set effective end date to be one second before the new record's effective start date
         # This ensures proper temporal ordering with minimal time difference
         from pyspark.sql.functions import col as spark_col, expr, current_timestamp
         
-        # Use current timestamp minus 1 second for the expire end date
-        expire_end_date = expr("current_timestamp() - interval 1 second")
+        # Use the new record's effective start date minus 1 second for the expire end date
+        expire_end_date = expr(f"source.{self.config.effective_start_column} - interval 1 second")
         
         logger.info("Executing merge to expire existing records")
         
@@ -364,24 +364,15 @@ class RecordManager:
         if self.config.surrogate_key_column in changed_records_df.columns:
             changed_records_df = changed_records_df.drop(self.config.surrogate_key_column)
         
-        # Generate new surrogate keys for the new versions using a more robust approach
-        # Use current timestamp + row number to ensure uniqueness
-        from pyspark.sql.functions import row_number, current_timestamp, concat, lit
-        from pyspark.sql.window import Window
+        # Generate new surrogate keys for the new versions using monotonically_increasing_id
+        # This ensures uniqueness across the entire Spark session
+        from pyspark.sql.functions import monotonically_increasing_id
         
-        # Create a window for row numbering
-        window = Window.orderBy(*self.config.business_key_columns)
-        
-        # Generate unique surrogate keys using timestamp + row number
+        # Generate unique surrogate keys using monotonically_increasing_id
         new_versions_df = changed_records_df.withColumn(
-            "row_num", row_number().over(window)
-        ).withColumn(
             self.config.surrogate_key_column,
-            concat(
-                lit("SK_"),
-                (current_timestamp().cast("bigint") * 1000 + col("row_num")).cast("string")
-            )
-        ).drop("row_num")
+            monotonically_increasing_id().cast("string")
+        )
         
         # For new versions, we need to insert them directly since they have different surrogate keys
         # We can't use merge with whenNotMatched because the business keys will match
