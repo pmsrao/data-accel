@@ -14,6 +14,16 @@ from ..common.config import SCDConfig, ProcessingMetrics
 from ..common.exceptions import SCDProcessingError
 
 logger = logging.getLogger(__name__)
+# Ensure debug statements are visible
+logger.setLevel(logging.DEBUG)
+
+# Add console handler if not already present
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
 
 class RecordManager:

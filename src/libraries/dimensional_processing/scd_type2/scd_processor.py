@@ -17,6 +17,16 @@ from .date_manager import DateManager
 from .validators import SCDValidator
 
 logger = logging.getLogger(__name__)
+# Ensure debug statements are visible
+logger.setLevel(logging.DEBUG)
+
+# Add console handler if not already present
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
 
 class SCDProcessor:
@@ -51,36 +61,44 @@ class SCDProcessor:
         Returns:
             ProcessingMetrics: Processing metrics and status
         """
+        logger.info("🚀 ENTER: process_scd")
         start_time = time.time()
         
         try:
-            logger.info(f"Starting SCD processing for {source_df.count()} records")
+            logger.info(f"🔍 DEBUG: Starting SCD processing for {source_df.count()} records")
             
             # Step 1: Validate input data
+            logger.info("🔍 DEBUG: Step 1 - Validating input data")
             validation_result = self.validator.validate_source_data(source_df)
             if not validation_result.is_valid:
                 logger.error(f"Validation failed: {validation_result.errors}")
                 raise SCDValidationError(f"Validation failed: {validation_result.errors}")
             
             # Step 2: Add error tracking columns
+            logger.info("🔍 DEBUG: Step 2 - Adding error tracking columns")
             source_df = add_error_columns(source_df, 
                                         self.config.error_flag_column,
                                         self.config.error_message_column)
             
             # Step 3: Prepare source data with SCD metadata
+            logger.info("🔍 DEBUG: Step 3 - Preparing source data")
             prepared_df = self._prepare_source_data(source_df)
             
             # Step 4: Get current records from target table
+            logger.info("🔍 DEBUG: Step 4 - Getting current records")
             current_records = self.record_manager.get_current_records()
             
             # Step 5: Create change plan
+            logger.info("🔍 DEBUG: Step 5 - Creating change plan")
             change_plan = self.record_manager.create_change_plan(prepared_df, current_records)
             
             # Step 6: Execute changes
+            logger.info("🔍 DEBUG: Step 6 - Executing change plan")
             execution_result = self.record_manager.execute_change_plan(change_plan)
             
             # Step 7: Optimize table if enabled
             if self.config.enable_optimization:
+                logger.info("🔍 DEBUG: Step 7 - Optimizing table")
                 self.record_manager.optimize_table()
             
             # Step 8: Calculate final metrics
@@ -88,10 +106,12 @@ class SCDProcessor:
             execution_result.processing_time_seconds = processing_time
             
             logger.info(f"SCD processing completed successfully. Metrics: {execution_result.to_dict()}")
+            logger.info("🏁 EXIT: process_scd")
             return execution_result
             
         except Exception as e:
             logger.error(f"SCD processing failed: {str(e)}")
+            logger.info("🏁 EXIT: process_scd (with error)")
             raise SCDProcessingError(f"SCD processing failed: {str(e)}")
     
     def _prepare_source_data(self, source_df: DataFrame) -> DataFrame:
