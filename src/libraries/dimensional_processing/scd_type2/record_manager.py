@@ -57,6 +57,8 @@ class RecordManager:
         Returns:
             Dictionary with categorized DataFrames
         """
+        logger.info("🚀 ENTER: create_change_plan")
+        
         # DEBUG: Log input DataFrames
         logger.info(f"🔍 DEBUG: Source DataFrame count: {source_df.count()}")
         logger.info(f"🔍 DEBUG: Current DataFrame count: {current_df.count()}")
@@ -142,6 +144,7 @@ class RecordManager:
         }
         
         logger.info(f"Change plan created: {new_records.count()} new, {unchanged_records.count()} unchanged, {changed_records.count()} changed")
+        logger.info("🏁 EXIT: create_change_plan")
         return change_plan
     
     def execute_change_plan(self, change_plan: Dict[str, DataFrame]) -> ProcessingMetrics:
@@ -154,30 +157,45 @@ class RecordManager:
         Returns:
             ProcessingMetrics with execution results
         """
+        logger.info("🚀 ENTER: execute_change_plan")
         start_time = time.time()
         metrics = ProcessingMetrics()
         
         try:
+            logger.info(f"🔍 DEBUG: execute_change_plan called with change_plan keys: {list(change_plan.keys())}")
+            logger.info(f"🔍 DEBUG: New records count: {change_plan['new_records'].count()}")
+            logger.info(f"🔍 DEBUG: Changed records count: {change_plan['changed_records'].count()}")
+            logger.info(f"🔍 DEBUG: Unchanged records count: {change_plan['unchanged_records'].count()}")
+            
             # Process new records
+            logger.info("🔍 DEBUG: About to process new records")
             new_count = self._insert_new_records(change_plan["new_records"])
+            logger.info(f"🔍 DEBUG: New records processed, count: {new_count}")
             metrics.new_records_created = new_count
             
             # Process changed records
+            logger.info("🔍 DEBUG: About to process changed records")
             updated_count = self._process_changed_records(change_plan["changed_records"])
+            logger.info(f"🔍 DEBUG: Changed records processed, count: {updated_count}")
             metrics.existing_records_updated = updated_count
             
             # Process unchanged records (update if needed)
+            logger.info("🔍 DEBUG: About to process unchanged records")
             unchanged_count = self._process_unchanged_records(change_plan["unchanged_records"])
+            logger.info(f"🔍 DEBUG: Unchanged records processed, count: {unchanged_count}")
             metrics.existing_records_updated += unchanged_count
             
             metrics.records_processed = new_count + updated_count + unchanged_count
             metrics.processing_time_seconds = time.time() - start_time
             
+            logger.info(f"🔍 DEBUG: Final metrics - New: {new_count}, Updated: {updated_count}, Unchanged: {unchanged_count}, Total: {metrics.records_processed}")
             logger.info(f"Change plan executed successfully. Metrics: {metrics.to_dict()}")
+            logger.info("🏁 EXIT: execute_change_plan")
             return metrics
             
         except Exception as e:
             logger.error(f"Error executing change plan: {str(e)}")
+            logger.info("🏁 EXIT: execute_change_plan (with error)")
             raise SCDProcessingError(f"Failed to execute change plan: {str(e)}")
     
     def _insert_new_records(self, new_records_df: DataFrame) -> int:
@@ -190,10 +208,12 @@ class RecordManager:
         Returns:
             Number of records inserted
         """
+        logger.info("🚀 ENTER: _insert_new_records")
         logger.info(f"🔍 DEBUG: _insert_new_records called with {new_records_df.count()} records")
         
         if new_records_df.isEmpty():
             logger.info("🔍 DEBUG: New records DataFrame is empty, returning 0")
+            logger.info("🏁 EXIT: _insert_new_records (empty)")
             return 0
         
         # DEBUG: Show sample new records before insertion
@@ -222,6 +242,7 @@ class RecordManager:
         
         record_count = insert_df.count()
         logger.info(f"Inserted {record_count} new records")
+        logger.info("🏁 EXIT: _insert_new_records")
         return record_count
     
     def _process_changed_records(self, changed_records_df: DataFrame) -> int:
@@ -234,10 +255,12 @@ class RecordManager:
         Returns:
             Number of new versions created
         """
+        logger.info("🚀 ENTER: _process_changed_records")
         logger.info(f"🔍 DEBUG: _process_changed_records called with {changed_records_df.count()} records")
         
         if changed_records_df.isEmpty():
             logger.info("🔍 DEBUG: Changed records DataFrame is empty, returning 0")
+            logger.info("🏁 EXIT: _process_changed_records (empty)")
             return 0
         
         record_count = changed_records_df.count()
@@ -258,6 +281,7 @@ class RecordManager:
         logger.info(f"🔍 DEBUG: Finished inserting {new_versions_count} new versions")
         
         logger.info(f"Processed {record_count} changed records, created {new_versions_count} new versions")
+        logger.info("🏁 EXIT: _process_changed_records")
         return new_versions_count
     
     def _process_unchanged_records(self, unchanged_records_df: DataFrame) -> int:
@@ -286,6 +310,7 @@ class RecordManager:
         Args:
             changed_records_df: DataFrame with changed records
         """
+        logger.info("🚀 ENTER: _expire_existing_records")
         from pyspark.sql.functions import expr
         
         logger.info(f"🔍 DEBUG: _expire_existing_records called with {changed_records_df.count()} records")
@@ -327,6 +352,7 @@ class RecordManager:
         
         logger.info("🔍 DEBUG: Finished executing merge for expiring records")
         logger.info("Expired existing records for changed records")
+        logger.info("🏁 EXIT: _expire_existing_records")
     
     def _insert_new_versions(self, changed_records_df: DataFrame) -> int:
         """
@@ -338,6 +364,7 @@ class RecordManager:
         Returns:
             Number of new versions inserted
         """
+        logger.info("🚀 ENTER: _insert_new_versions")
         from pyspark.sql.functions import monotonically_increasing_id
         
         logger.info(f"🔍 DEBUG: _insert_new_versions called with {changed_records_df.count()} records")
@@ -381,6 +408,7 @@ class RecordManager:
         
         record_count = new_versions_df.count()
         logger.info(f"Inserted {record_count} new versions for changed records")
+        logger.info("🏁 EXIT: _insert_new_versions")
         return record_count
     
     def _build_source_columns(self) -> list:
