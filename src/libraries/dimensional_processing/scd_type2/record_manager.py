@@ -79,7 +79,7 @@ class RecordManager:
             "changed_records": changed_records
         }
         
-        logger.info(f"Change plan created: {len(new_records)} new, {len(unchanged_records)} unchanged, {len(changed_records)} changed")
+        logger.info(f"Change plan created: {new_records.count()} new, {unchanged_records.count()} unchanged, {changed_records.count()} changed")
         return change_plan
     
     def execute_change_plan(self, change_plan: Dict[str, DataFrame]) -> ProcessingMetrics:

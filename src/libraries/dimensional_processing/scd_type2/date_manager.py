@@ -4,7 +4,7 @@ Date management utilities for SCD processing.
 
 from typing import Optional
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, current_timestamp, coalesce, lit
+from pyspark.sql.functions import col, current_timestamp, coalesce, lit, monotonically_increasing_id
 import logging
 
 from ..common.config import SCDConfig
@@ -164,3 +164,25 @@ class DateManager:
             self.config.created_ts_column,
             self.config.modified_ts_column
         ]
+    
+    def generate_surrogate_keys(self, df: DataFrame) -> DataFrame:
+        """
+        Generate surrogate keys for new records.
+        
+        Args:
+            df: Input DataFrame
+            
+        Returns:
+            DataFrame with surrogate keys added
+        """
+        logger.info("Generating surrogate keys for new records")
+        
+        # Generate surrogate keys using monotonically_increasing_id
+        # This creates unique IDs for each record
+        df_with_sk = df.withColumn(
+            self.config.surrogate_key_column,
+            monotonically_increasing_id()
+        )
+        
+        logger.info(f"Generated surrogate keys for {df_with_sk.count()} records")
+        return df_with_sk

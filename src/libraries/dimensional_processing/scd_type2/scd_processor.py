@@ -123,7 +123,10 @@ class SCDProcessor:
         df_with_current = self.date_manager.set_current_flag(df_with_end_date, "Y")
         
         # Step 5: Set audit timestamps
-        prepared_df = self.date_manager.set_audit_timestamps(df_with_current)
+        df_with_audit = self.date_manager.set_audit_timestamps(df_with_current)
+        
+        # Step 6: Generate surrogate keys for new records
+        prepared_df = self.date_manager.generate_surrogate_keys(df_with_audit)
         
         logger.info(f"Prepared {prepared_df.count()} records with SCD metadata")
         return prepared_df

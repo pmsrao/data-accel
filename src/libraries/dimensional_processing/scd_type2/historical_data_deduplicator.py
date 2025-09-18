@@ -37,6 +37,7 @@ class HistoricalDataDeduplicator:
             target_table="temp",
             business_key_columns=config.business_key_columns,
             scd_columns=config.scd_columns,
+            surrogate_key_column="temp_sk",  # Temporary surrogate key for deduplication
             scd_hash_column=config.scd_hash_column
         )
         
