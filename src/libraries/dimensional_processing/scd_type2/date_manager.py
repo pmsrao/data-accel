@@ -51,19 +51,20 @@ class DateManager:
             logger.info("🔍 DEBUG: Sample input data:")
             df.select("customer_id", "last_modified_ts", "created_ts").show(10, False)
         
-        # Priority: initial_eff_date_col > effective_from_col > current_timestamp
-        if initial_eff_date_col and initial_eff_date_col in df.columns:
-            effective_start = coalesce(
-                col(initial_eff_date_col).cast("timestamp"),
-                current_ts
-            )
-            logger.info(f"🔍 DEBUG: Using initial effective date column: {initial_eff_date_col}")
-        elif effective_from_col and effective_from_col in df.columns:
+        # Priority: effective_from_col > initial_eff_date_col > current_timestamp
+        # For incremental loads, we should use the business date (effective_from_col) not the creation date
+        if effective_from_col and effective_from_col in df.columns:
             effective_start = coalesce(
                 col(effective_from_col).cast("timestamp"),
                 current_ts
             )
             logger.info(f"🔍 DEBUG: Using effective from column: {effective_from_col}")
+        elif initial_eff_date_col and initial_eff_date_col in df.columns:
+            effective_start = coalesce(
+                col(initial_eff_date_col).cast("timestamp"),
+                current_ts
+            )
+            logger.info(f"🔍 DEBUG: Using initial effective date column: {initial_eff_date_col}")
         else:
             effective_start = current_ts
             logger.info("🔍 DEBUG: Using current timestamp as effective start date")

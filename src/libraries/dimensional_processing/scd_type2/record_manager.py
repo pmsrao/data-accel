@@ -253,7 +253,7 @@ class RecordManager:
         
         # Show sample data to understand what effective_start_ts_utc values we have
         logger.info("🔍 DEBUG: Sample changed_records_df data:")
-        changed_records_df.select("customer_id", "effective_start_ts_utc", "last_modified_ts").show(10, False)
+        changed_records_df.select("customer_id", "effective_start_ts_utc").show(10, False)
         
         # Check if we have the business date column
         if "last_modified_ts" in changed_records_df.columns:
