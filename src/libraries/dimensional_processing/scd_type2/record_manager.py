@@ -246,22 +246,9 @@ class RecordManager:
         temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
         df_for_temp_table.write.mode("overwrite").saveAsTable(temp_table_name)
         
-        # CRITICAL: Use business date from source data for effective start
-        # The effective_from_column contains the business date from the source data
-        from pyspark.sql.functions import col
-        if self.config.effective_from_column and self.config.effective_from_column in changed_records_df.columns:
-            # Use the business date from the source data
-            changed_records_with_new_dates = changed_records_df.withColumn(
-                self.config.effective_start_column,
-                col(self.config.effective_from_column)  # Use business date from source
-            )
-        else:
-            # Fallback to current timestamp if no business date column
-            from pyspark.sql.functions import current_timestamp
-            changed_records_with_new_dates = changed_records_df.withColumn(
-                self.config.effective_start_column,
-                current_timestamp()
-            )
+        # The changed_records_df already has the correct effective_start_ts_utc values
+        # from the determine_effective_start method, so we don't need to override them
+        changed_records_with_new_dates = changed_records_df
         
         # Execute the merge operation with the updated effective dates
         self._expire_existing_records(changed_records_with_new_dates)
@@ -283,20 +270,8 @@ class RecordManager:
         # The temporary table preserved the original values, but we need the new ones from source
         logger.info("Updating effective dates from source data")
         
-        # Use business date from source data for new versions
-        if self.config.effective_from_column and self.config.effective_from_column in reconstructed_df.columns:
-            # Use the business date from the source data
-            reconstructed_df = reconstructed_df.withColumn(
-                self.config.effective_start_column,
-                col(self.config.effective_from_column)  # Use business date from source
-            )
-        else:
-            # Fallback to current timestamp if no business date column
-            from pyspark.sql.functions import current_timestamp
-            reconstructed_df = reconstructed_df.withColumn(
-                self.config.effective_start_column,
-                current_timestamp()
-            )
+        # The reconstructed_df already has the correct effective_start_ts_utc values
+        # from the original source data, so we don't need to override them
         
         reconstructed_df.persist()
         reconstructed_df.count()  # Force evaluation
