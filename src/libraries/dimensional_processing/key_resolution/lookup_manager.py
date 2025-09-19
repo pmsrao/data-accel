@@ -137,11 +137,11 @@ class LookupManager:
         for bk_col in self.config.business_key_columns:
             join_conditions.append(fact_df[bk_col] == historical_dimension[bk_col])
         
-        # Add date range conditions
+        # Add date range conditions using proper column references
         join_conditions.extend([
-            col(f"fact.{business_date_column}") >= col(f"dim.{self.config.effective_start_column}"),
-            (col(f"dim.{self.config.effective_end_column}").isNull()) | 
-            (col(f"fact.{business_date_column}") < col(f"dim.{self.config.effective_end_column}"))
+            fact_df[business_date_column] >= historical_dimension[self.config.effective_start_column],
+            (historical_dimension[self.config.effective_end_column].isNull()) | 
+            (fact_df[business_date_column] < historical_dimension[self.config.effective_end_column])
         ])
         
         # Combine all conditions with AND
