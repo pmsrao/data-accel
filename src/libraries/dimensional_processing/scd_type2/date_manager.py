@@ -179,12 +179,23 @@ class DateManager:
         
         logger.info("Generating surrogate keys for new records")
         
-        # Generate surrogate keys using monotonically_increasing_id and cast to StringType
-        # This creates unique IDs for each record and ensures type compatibility
+        # Generate consistent surrogate keys using timestamp + row_number approach
+        from pyspark.sql.functions import row_number, current_timestamp, concat, lit
+        from pyspark.sql.window import Window
+        
+        # Create a window for row numbering (use first business key column for ordering)
+        window = Window.orderBy(col(self.config.business_key_columns[0]))
+        
+        # Generate consistent surrogate keys: timestamp + row_number
         df_with_sk = df.withColumn(
+            "row_num", row_number().over(window)
+        ).withColumn(
             self.config.surrogate_key_column,
-            monotonically_increasing_id().cast("string")
-        )
+            concat(
+                lit("SK_"),
+                (current_timestamp().cast("bigint") * 1000 + col("row_num")).cast("string")
+            )
+        ).drop("row_num")
         
         logger.info(f"Generated surrogate keys for {df_with_sk.count()} records")
         return df_with_sk

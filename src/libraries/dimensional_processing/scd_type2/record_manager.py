@@ -238,6 +238,10 @@ class RecordManager:
             .otherwise(col(self.config.effective_end_column))
         )
         
+        # CRITICAL: Drop the surrogate key column to ensure new versions get fresh keys
+        if self.config.surrogate_key_column in df_for_temp_table.columns:
+            df_for_temp_table = df_for_temp_table.drop(self.config.surrogate_key_column)
+        
         # Create a temporary table to store the data
         temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
         df_for_temp_table.write.mode("overwrite").saveAsTable(temp_table_name)
@@ -371,15 +375,24 @@ class RecordManager:
         if self.config.surrogate_key_column in changed_records_df.columns:
             changed_records_df = changed_records_df.drop(self.config.surrogate_key_column)
         
-        # Generate new surrogate keys for the new versions using monotonically_increasing_id
-        # This ensures uniqueness across the entire Spark session
-        from pyspark.sql.functions import monotonically_increasing_id
+        # Generate new surrogate keys for the new versions
+        # Use a more consistent approach with row_number + current timestamp
+        from pyspark.sql.functions import row_number, current_timestamp, concat, lit, col
+        from pyspark.sql.window import Window
         
-        # Generate unique surrogate keys using monotonically_increasing_id
+        # Create a window for row numbering
+        window = Window.orderBy(col("customer_id"))  # Use business key for consistent ordering
+        
+        # Generate consistent surrogate keys: timestamp + row_number
         new_versions_df = changed_records_df.withColumn(
+            "row_num", row_number().over(window)
+        ).withColumn(
             self.config.surrogate_key_column,
-            monotonically_increasing_id().cast("string")
-        )
+            concat(
+                lit("SK_"),
+                (current_timestamp().cast("bigint") * 1000 + col("row_num")).cast("string")
+            )
+        ).drop("row_num")
         
         # For new versions, we need to insert them directly since they have different surrogate keys
         # We can't use merge with whenNotMatched because the business keys will match
