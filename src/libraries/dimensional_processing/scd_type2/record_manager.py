@@ -242,8 +242,15 @@ class RecordManager:
         temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
         df_for_temp_table.write.mode("overwrite").saveAsTable(temp_table_name)
         
-        # Execute the merge operation
-        self._expire_existing_records(changed_records_df)
+        # CRITICAL: Update effective dates BEFORE expiring to ensure correct end dates
+        from pyspark.sql.functions import current_timestamp
+        changed_records_with_new_dates = changed_records_df.withColumn(
+            self.config.effective_start_column,
+            current_timestamp()  # Use current timestamp for new versions
+        )
+        
+        # Execute the merge operation with the updated effective dates
+        self._expire_existing_records(changed_records_with_new_dates)
         
         # Read back the data from temporary table
         from pyspark.sql import SparkSession
