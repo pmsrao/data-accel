@@ -40,24 +40,41 @@ class DateManager:
         """
         current_ts = current_timestamp()
         
+        # DEBUG: Let's trace what's happening in determine_effective_start
+        logger.info("🔍 DEBUG: determine_effective_start - analyzing input:")
+        logger.info(f"🔍 DEBUG: df columns: {df.columns}")
+        logger.info(f"🔍 DEBUG: effective_from_col: {effective_from_col}")
+        logger.info(f"🔍 DEBUG: initial_eff_date_col: {initial_eff_date_col}")
+        
+        # Show sample data to understand what we're working with
+        if df.count() > 0:
+            logger.info("🔍 DEBUG: Sample input data:")
+            df.select("customer_id", "last_modified_ts", "created_ts").show(10, False)
+        
         # Priority: initial_eff_date_col > effective_from_col > current_timestamp
         if initial_eff_date_col and initial_eff_date_col in df.columns:
             effective_start = coalesce(
                 col(initial_eff_date_col).cast("timestamp"),
                 current_ts
             )
-            logger.info(f"Using initial effective date column: {initial_eff_date_col}")
+            logger.info(f"🔍 DEBUG: Using initial effective date column: {initial_eff_date_col}")
         elif effective_from_col and effective_from_col in df.columns:
             effective_start = coalesce(
                 col(effective_from_col).cast("timestamp"),
                 current_ts
             )
-            logger.info(f"Using effective from column: {effective_from_col}")
+            logger.info(f"🔍 DEBUG: Using effective from column: {effective_from_col}")
         else:
             effective_start = current_ts
-            logger.info("Using current timestamp as effective start date")
+            logger.info("🔍 DEBUG: Using current timestamp as effective start date")
         
-        return df.withColumn(self.config.effective_start_column, effective_start)
+        result_df = df.withColumn(self.config.effective_start_column, effective_start)
+        
+        # DEBUG: Show the result
+        logger.info("🔍 DEBUG: Sample result data after determine_effective_start:")
+        result_df.select("customer_id", "effective_start_ts_utc", "last_modified_ts").show(10, False)
+        
+        return result_df
     
     def set_effective_end_date(self, df: DataFrame, end_date_value) -> DataFrame:
         """

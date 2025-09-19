@@ -246,6 +246,23 @@ class RecordManager:
         temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
         df_for_temp_table.write.mode("overwrite").saveAsTable(temp_table_name)
         
+        # DEBUG: Let's trace what's in the changed_records_df
+        logger.info("🔍 DEBUG: Analyzing changed_records_df before expire operation")
+        logger.info(f"🔍 DEBUG: changed_records_df columns: {changed_records_df.columns}")
+        logger.info(f"🔍 DEBUG: changed_records_df count: {changed_records_df.count()}")
+        
+        # Show sample data to understand what effective_start_ts_utc values we have
+        logger.info("🔍 DEBUG: Sample changed_records_df data:")
+        changed_records_df.select("customer_id", "effective_start_ts_utc", "last_modified_ts").show(10, False)
+        
+        # Check if we have the business date column
+        if "last_modified_ts" in changed_records_df.columns:
+            logger.info("🔍 DEBUG: last_modified_ts column found in changed_records_df")
+            logger.info("🔍 DEBUG: Sample last_modified_ts values:")
+            changed_records_df.select("customer_id", "last_modified_ts").show(10, False)
+        else:
+            logger.info("🔍 DEBUG: last_modified_ts column NOT found in changed_records_df")
+        
         # The changed_records_df already has the correct effective_start_ts_utc values
         # from the determine_effective_start method, so we don't need to override them
         changed_records_with_new_dates = changed_records_df
@@ -336,6 +353,12 @@ class RecordManager:
         # Use the new record's effective start date minus 1 second for the expire end date
         expire_end_date = expr(f"source.{self.config.effective_start_column} - interval 1 second")
         
+        # DEBUG: Let's see what effective_start_ts_utc values are being used for expire
+        logger.info("🔍 DEBUG: Expire operation details:")
+        logger.info(f"🔍 DEBUG: Using expire_end_date expression: source.{self.config.effective_start_column} - interval 1 second")
+        logger.info("🔍 DEBUG: Sample source effective_start_ts_utc values for expire:")
+        changed_records_df.select("customer_id", "effective_start_ts_utc").show(10, False)
+        
         logger.info("Executing merge to expire existing records")
         
         # Execute merge to expire existing records
@@ -376,6 +399,12 @@ class RecordManager:
         # Create a window for row numbering
         window = Window.orderBy(col("customer_id"))  # Use business key for consistent ordering
         
+        # DEBUG: Let's see what effective_start_ts_utc values we have before generating new versions
+        logger.info("🔍 DEBUG: _insert_new_versions - analyzing input data:")
+        logger.info(f"🔍 DEBUG: changed_records_df columns: {changed_records_df.columns}")
+        logger.info("🔍 DEBUG: Sample effective_start_ts_utc values before new version generation:")
+        changed_records_df.select("customer_id", "effective_start_ts_utc").show(10, False)
+        
         # Generate consistent surrogate keys: timestamp + row_number
         new_versions_df = changed_records_df.withColumn(
             "row_num", row_number().over(window)
@@ -386,6 +415,10 @@ class RecordManager:
                 (current_timestamp().cast("bigint") * 1000 + col("row_num")).cast("string")
             )
         ).drop("row_num")
+        
+        # DEBUG: Let's see what effective_start_ts_utc values we have after generating new versions
+        logger.info("🔍 DEBUG: Sample effective_start_ts_utc values after new version generation:")
+        new_versions_df.select("customer_id", "effective_start_ts_utc").show(10, False)
         
         # For new versions, we need to insert them directly since they have different surrogate keys
         # We can't use merge with whenNotMatched because the business keys will match
