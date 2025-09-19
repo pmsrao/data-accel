@@ -86,9 +86,20 @@ class LookupManager:
             dimension_df = broadcast(dimension_df)
             logger.info("Using broadcast join for current dimension lookup")
         
+        # Build join condition for business key columns
+        join_conditions = []
+        for bk_col in self.config.business_key_columns:
+            join_conditions.append(fact_df[bk_col] == dimension_df[bk_col])
+        
+        # Combine all conditions with AND
+        from pyspark.sql.functions import col
+        join_condition = join_conditions[0]
+        for condition in join_conditions[1:]:
+            join_condition = join_condition & condition
+        
         resolved_df = fact_df.join(
             dimension_df,
-            self.config.business_key_columns,
+            join_condition,
             "left"
         )
         
@@ -119,14 +130,28 @@ class LookupManager:
         # Get historical dimension records
         historical_dimension = self.get_historical_dimension_records()
         
-        # Join with date range condition
+        # Build join condition for business key columns and date range
+        join_conditions = []
+        
+        # Add business key conditions
+        for bk_col in self.config.business_key_columns:
+            join_conditions.append(fact_df[bk_col] == historical_dimension[bk_col])
+        
+        # Add date range conditions
+        join_conditions.extend([
+            col(f"fact.{business_date_column}") >= col(f"dim.{self.config.effective_start_column}"),
+            (col(f"dim.{self.config.effective_end_column}").isNull()) | 
+            (col(f"fact.{business_date_column}") < col(f"dim.{self.config.effective_end_column}"))
+        ])
+        
+        # Combine all conditions with AND
+        join_condition = join_conditions[0]
+        for condition in join_conditions[1:]:
+            join_condition = join_condition & condition
+        
         resolved_df = fact_df.join(
             historical_dimension,
-            self.config.business_key_columns + [
-                col(f"fact.{business_date_column}") >= col(f"dim.{self.config.effective_start_column}"),
-                (col(f"dim.{self.config.effective_end_column}").isNull()) | 
-                (col(f"fact.{business_date_column}") < col(f"dim.{self.config.effective_end_column}"))
-            ],
+            join_condition,
             "left"
         )
         
