@@ -164,19 +164,24 @@ class HistoricalDataDeduplicator:
     
     def _keep_latest_per_scd_hash(self, df: DataFrame) -> DataFrame:
         """
-        Keep the latest record per business key and SCD hash.
+        Keep the latest record per business key, SCD hash, and effective date.
+        This ensures we only remove exact duplicates, not different versions of the same entity.
         
         Args:
             df: Input DataFrame
             
         Returns:
-            DataFrame with latest records per SCD hash
+            DataFrame with latest records per unique combination
         """
         logger.info("Applying 'latest' deduplication strategy")
         
+        # For SCD Type 2, we should only deduplicate records that are truly identical
+        # (same business key + same SCD hash + same effective date)
+        # Different SCD hashes represent different versions and should be kept
         window_spec = Window.partitionBy(
             *self.config.business_key_columns, 
-            self.config.scd_hash_column
+            self.config.scd_hash_column,
+            self.config.effective_from_column  # Add effective date to ensure we only dedupe exact duplicates
         ).orderBy(col(self.config.effective_from_column).desc())
         
         return (df
@@ -186,19 +191,24 @@ class HistoricalDataDeduplicator:
     
     def _keep_earliest_per_scd_hash(self, df: DataFrame) -> DataFrame:
         """
-        Keep the earliest record per business key and SCD hash.
+        Keep the earliest record per business key, SCD hash, and effective date.
+        This ensures we only remove exact duplicates, not different versions of the same entity.
         
         Args:
             df: Input DataFrame
             
         Returns:
-            DataFrame with earliest records per SCD hash
+            DataFrame with earliest records per unique combination
         """
         logger.info("Applying 'earliest' deduplication strategy")
         
+        # For SCD Type 2, we should only deduplicate records that are truly identical
+        # (same business key + same SCD hash + same effective date)
+        # Different SCD hashes represent different versions and should be kept
         window_spec = Window.partitionBy(
             *self.config.business_key_columns, 
-            self.config.scd_hash_column
+            self.config.scd_hash_column,
+            self.config.effective_from_column  # Add effective date to ensure we only dedupe exact duplicates
         ).orderBy(col(self.config.effective_from_column).asc())
         
         return (df
