@@ -153,7 +153,7 @@ print(f"   SCD Columns: {scd_config.scd_columns}")
 dedup_config = DeduplicationConfig(
     business_key_columns=["customer_id"],
     scd_columns=["name", "email", "address"],
-    effective_from_column="created_ts",
+    effective_from_column="last_modified_ts",  # Use last_modified_ts instead of created_ts for proper deduplication
     deduplication_strategy="latest"
 )
 
