@@ -290,7 +290,8 @@ class RecordManager:
         # The reconstructed_df already has the correct effective_start_ts_utc values
         # from the original source data, so we don't need to override them
         
-        reconstructed_df.persist()
+        # Force evaluation of the DataFrame before dropping the temporary table
+        # This ensures the data is materialized in Spark Connect/Serverless
         reconstructed_df.count()  # Force evaluation
         
         # Clean up temporary table

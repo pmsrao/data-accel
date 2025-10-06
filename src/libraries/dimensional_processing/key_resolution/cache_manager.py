@@ -67,12 +67,18 @@ class CacheManager:
         if not self.config.enable_caching:
             return
         
-        # Cache the DataFrame
-        df.cache()
-        self.cache[cache_key] = df
-        self.cache_timestamps[cache_key] = time.time()
-        
-        logger.info(f"Cached {df.count()} records for key: {cache_key}")
+        # Cache the DataFrame (skip in Spark Connect/Serverless)
+        try:
+            df.cache()
+            self.cache[cache_key] = df
+            self.cache_timestamps[cache_key] = time.time()
+            logger.info(f"Cached {df.count()} records for key: {cache_key}")
+        except Exception as e:
+            # Skip caching in Spark Connect/Serverless where cache() is not supported
+            logger.warning(f"Caching not supported in this environment: {str(e)}")
+            logger.info(f"Storing DataFrame reference for key: {cache_key} (without caching)")
+            self.cache[cache_key] = df
+            self.cache_timestamps[cache_key] = time.time()
     
     def create_broadcast_lookup(self, dimension_df: DataFrame) -> DataFrame:
         """

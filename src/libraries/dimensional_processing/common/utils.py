@@ -140,9 +140,14 @@ def optimize_dataframe_for_processing(df: DataFrame,
         df = df.repartition(target_partitions)
         logger.info(f"Repartitioned DataFrame to {target_partitions} partitions")
     
-    # Cache the DataFrame
-    df.cache()
-    logger.info("Cached DataFrame for processing")
+    # Cache the DataFrame (skip in Spark Connect/Serverless)
+    try:
+        df.cache()
+        logger.info("Cached DataFrame for processing")
+    except Exception as e:
+        # Skip caching in Spark Connect/Serverless where cache() is not supported
+        logger.warning(f"Caching not supported in this environment: {str(e)}")
+        logger.info("Skipping DataFrame caching for processing")
     
     return df
 
