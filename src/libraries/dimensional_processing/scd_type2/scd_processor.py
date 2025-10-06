@@ -78,23 +78,15 @@ class SCDProcessor:
                                         self.config.error_flag_column,
                                         self.config.error_message_column)
             
-            # Step 3: Prepare source data with SCD metadata
-            prepared_df = self._prepare_source_data(source_df)
+            # Step 3: Process records by business key to ensure proper SCD Type 2 behavior
+            # This ensures that multiple records for the same business key are processed sequentially
+            execution_result = self._process_by_business_key(source_df)
             
-            # Step 4: Get current records from target table
-            current_records = self.record_manager.get_current_records()
-            
-            # Step 5: Create change plan
-            change_plan = self.record_manager.create_change_plan(prepared_df, current_records)
-            
-            # Step 6: Execute changes
-            execution_result = self.record_manager.execute_change_plan(change_plan, prepared_df)
-            
-            # Step 7: Optimize table if enabled
+            # Step 4: Optimize table if enabled
             if self.config.enable_optimization:
                 self.record_manager.optimize_table()
             
-            # Step 8: Calculate final metrics
+            # Step 5: Calculate final metrics
             processing_time = time.time() - start_time
             execution_result.processing_time_seconds = processing_time
             
@@ -106,6 +98,128 @@ class SCDProcessor:
             logger.error(f"SCD processing failed: {str(e)}")
             logger.info("🏁 EXIT: process_scd (with error)")
             raise SCDProcessingError(f"SCD processing failed: {str(e)}")
+    
+    def _process_by_business_key(self, source_df: DataFrame) -> ProcessingMetrics:
+        """
+        Process records by business key to ensure proper SCD Type 2 behavior.
+        This ensures that multiple records for the same business key are processed sequentially.
+        
+        Args:
+            source_df: Source DataFrame with data to process
+            
+        Returns:
+            ProcessingMetrics: Processing metrics and status
+        """
+        logger.info("🚀 ENTER: _process_by_business_key")
+        
+        from pyspark.sql.functions import col, row_number
+        from pyspark.sql.window import Window
+        
+        # Sort source data by business key and effective date
+        sorted_df = source_df.orderBy(
+            *self.config.business_key_columns,
+            col(self.config.effective_from_column).asc_nulls_last()
+        )
+        
+        # Create a window to number records within each business key group
+        window_spec = Window.partitionBy(*self.config.business_key_columns).orderBy(
+            col(self.config.effective_from_column).asc_nulls_last()
+        )
+        
+        # Add row number to track processing order
+        df_with_row_num = sorted_df.withColumn("processing_order", row_number().over(window_spec))
+        
+        # Get unique business keys
+        business_keys_df = df_with_row_num.select(*self.config.business_key_columns).distinct()
+        business_keys = business_keys_df.collect()
+        
+        logger.info(f"Processing {len(business_keys)} unique business keys")
+        
+        # Initialize metrics
+        total_metrics = ProcessingMetrics()
+        
+        # Process each business key sequentially
+        for i, business_key_row in enumerate(business_keys):
+            business_key_values = [business_key_row[col] for col in self.config.business_key_columns]
+            logger.info(f"Processing business key {i+1}/{len(business_keys)}: {business_key_values}")
+            
+            # Filter records for this business key
+            business_key_condition = None
+            for j, col_name in enumerate(self.config.business_key_columns):
+                condition = col(col_name) == business_key_values[j]
+                if business_key_condition is None:
+                    business_key_condition = condition
+                else:
+                    business_key_condition = business_key_condition & condition
+            
+            business_key_df = df_with_row_num.filter(business_key_condition).drop("processing_order")
+            
+            # Process records for this business key in chronological order
+            business_key_metrics = self._process_business_key_records(business_key_df)
+            
+            # Accumulate metrics
+            total_metrics.records_processed += business_key_metrics.records_processed
+            total_metrics.new_records_created += business_key_metrics.new_records_created
+            total_metrics.existing_records_updated += business_key_metrics.existing_records_updated
+        
+        logger.info("🏁 EXIT: _process_by_business_key")
+        return total_metrics
+    
+    def _process_business_key_records(self, business_key_df: DataFrame) -> ProcessingMetrics:
+        """
+        Process all records for a single business key in chronological order.
+        
+        Args:
+            business_key_df: DataFrame with records for a single business key
+            
+        Returns:
+            ProcessingMetrics: Processing metrics for this business key
+        """
+        logger.info("🚀 ENTER: _process_business_key_records")
+        
+        from pyspark.sql.functions import col, row_number
+        from pyspark.sql.window import Window
+        
+        # Sort by effective date to ensure chronological processing
+        sorted_df = business_key_df.orderBy(col(self.config.effective_from_column).asc_nulls_last())
+        
+        # Create window to number records chronologically
+        window_spec = Window.orderBy(col(self.config.effective_from_column).asc_nulls_last())
+        df_with_order = sorted_df.withColumn("chronological_order", row_number().over(window_spec))
+        
+        # Get the number of records to process
+        total_records = df_with_order.count()
+        logger.info(f"Processing {total_records} records for business key in chronological order")
+        
+        # Initialize metrics
+        business_key_metrics = ProcessingMetrics()
+        business_key_metrics.records_processed = total_records
+        
+        # Process records one by one in chronological order
+        for i in range(1, total_records + 1):
+            logger.info(f"Processing record {i}/{total_records} for business key")
+            
+            # Get the current record to process
+            current_record_df = df_with_order.filter(col("chronological_order") == i).drop("chronological_order")
+            
+            # Prepare the record with SCD metadata
+            prepared_df = self._prepare_source_data(current_record_df)
+            
+            # Get current records from target table
+            current_records = self.record_manager.get_current_records()
+            
+            # Create change plan for this single record
+            change_plan = self.record_manager.create_change_plan(prepared_df, current_records)
+            
+            # Execute changes for this record
+            record_metrics = self.record_manager.execute_change_plan(change_plan, prepared_df)
+            
+            # Accumulate metrics
+            business_key_metrics.new_records_created += record_metrics.new_records_created
+            business_key_metrics.existing_records_updated += record_metrics.existing_records_updated
+        
+        logger.info("🏁 EXIT: _process_business_key_records")
+        return business_key_metrics
     
     def _prepare_source_data(self, source_df: DataFrame) -> DataFrame:
         """
@@ -126,8 +240,17 @@ class SCDProcessor:
             deduplicated_df = source_df
             logger.info("Source deduplication is disabled - using original source data")
         
+        # Step 0.5: Sort source data by business key and effective date for proper SCD processing
+        # This ensures that records are processed in chronological order for each business key
+        from pyspark.sql.functions import col
+        sorted_df = deduplicated_df.orderBy(
+            *self.config.business_key_columns,
+            col(self.config.effective_from_column).asc_nulls_last()
+        )
+        logger.info("Sorted source data by business key and effective date for proper SCD processing")
+        
         # Step 1: Compute SCD hash
-        df_with_hash = self.hash_manager.compute_scd_hash(deduplicated_df)
+        df_with_hash = self.hash_manager.compute_scd_hash(sorted_df)
         
         # Step 2: Determine effective start date
         df_with_dates = self.date_manager.determine_effective_start(

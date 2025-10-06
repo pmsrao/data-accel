@@ -285,8 +285,9 @@ class HistoricalDataDeduplicator:
             raise DeduplicationError("Deduplication resulted in complete data loss")
         
         # Validate that all business keys are still present
-        original_business_keys = set(original_df.select(*self.config.business_key_columns).distinct().rdd.map(tuple).collect())
-        deduplicated_business_keys = set(deduplicated_df.select(*self.config.business_key_columns).distinct().rdd.map(tuple).collect())
+        # Use collect() instead of rdd.map(tuple).collect() for Spark Connect compatibility
+        original_business_keys = set(tuple(row) for row in original_df.select(*self.config.business_key_columns).distinct().collect())
+        deduplicated_business_keys = set(tuple(row) for row in deduplicated_df.select(*self.config.business_key_columns).distinct().collect())
         
         missing_business_keys = original_business_keys - deduplicated_business_keys
         if missing_business_keys:
