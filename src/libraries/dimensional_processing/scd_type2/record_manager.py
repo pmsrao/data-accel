@@ -222,31 +222,9 @@ class RecordManager:
         record_count = changed_records_df.count()
         logger.info(f"Processing {record_count} changed records")
         
-        # CRITICAL: Use temporary table to avoid DataFrame corruption after merge
-        # The issue is that even with persist(), the DataFrame gets corrupted after merge
-        # So we'll write to a temp table and read back after the merge
+        # Simplified approach: Use the DataFrame directly without temporary tables
+        # This avoids the complexity and potential issues with temporary tables in Spark Connect
         
-        logger.info(f"Storing {changed_records_df.count()} records in temporary table")
-        
-        # CRITICAL: Ensure effective_end_ts_utc column is preserved in temporary table
-        # Spark drops columns with only NULL values when writing to tables
-        # So we need to set a placeholder value before writing
-        from pyspark.sql.functions import lit, when, col
-        df_for_temp_table = changed_records_df.withColumn(
-            self.config.effective_end_column,
-            when(col(self.config.effective_end_column).isNull(), lit("9999-12-31 23:59:59").cast("timestamp"))
-            .otherwise(col(self.config.effective_end_column))
-        )
-        
-        # CRITICAL: Drop the surrogate key column to ensure new versions get fresh keys
-        if self.config.surrogate_key_column in df_for_temp_table.columns:
-            df_for_temp_table = df_for_temp_table.drop(self.config.surrogate_key_column)
-        
-        # Create a temporary table to store the data
-        temp_table_name = f"temp_changed_records_{id(changed_records_df)}"
-        df_for_temp_table.write.mode("overwrite").saveAsTable(temp_table_name)
-        
-        # DEBUG: Let's trace what's in the changed_records_df
         logger.info("🔍 DEBUG: Analyzing changed_records_df before expire operation")
         logger.info(f"🔍 DEBUG: changed_records_df columns: {changed_records_df.columns}")
         logger.info(f"🔍 DEBUG: changed_records_df count: {changed_records_df.count()}")
@@ -270,35 +248,14 @@ class RecordManager:
         # Execute the merge operation with the updated effective dates
         self._expire_existing_records(changed_records_with_new_dates)
         
-        # Read back the data from temporary table
-        from pyspark.sql import SparkSession
-        spark = SparkSession.getActiveSession()
-        reconstructed_df = spark.table(temp_table_name)
+        # Prepare the DataFrame for new version insertion
+        # Drop the surrogate key column to ensure new versions get fresh keys
+        df_for_insertion = changed_records_df
+        if self.config.surrogate_key_column in df_for_insertion.columns:
+            df_for_insertion = df_for_insertion.drop(self.config.surrogate_key_column)
         
-        # Restore the NULL values for effective_end_ts_utc
-        reconstructed_df = reconstructed_df.withColumn(
-            self.config.effective_end_column,
-            when(col(self.config.effective_end_column) == lit("9999-12-31 23:59:59").cast("timestamp"), lit(None).cast("timestamp"))
-            .otherwise(col(self.config.effective_end_column))
-        )
-        
-        # CRITICAL: The reconstructed DataFrame has the wrong effective_start_ts_utc values
-        # We need to use the original source data's effective_start_ts_utc values
-        # The temporary table preserved the original values, but we need the new ones from source
-        logger.info("Updating effective dates from source data")
-        
-        # The reconstructed_df already has the correct effective_start_ts_utc values
-        # from the original source data, so we don't need to override them
-        
-        # Force evaluation of the DataFrame before dropping the temporary table
-        # This ensures the data is materialized in Spark Connect/Serverless
-        reconstructed_df.count()  # Force evaluation
-        
-        # Clean up temporary table
-        spark.sql(f"DROP TABLE IF EXISTS {temp_table_name}")
-        
-        # Then, insert new versions using the reconstructed DataFrame
-        new_versions_count = self._insert_new_versions(reconstructed_df)
+        # Then, insert new versions using the prepared DataFrame
+        new_versions_count = self._insert_new_versions(df_for_insertion)
         logger.info(f"✅ Created {new_versions_count} new versions")
         
         logger.info(f"Processed {record_count} changed records, created {new_versions_count} new versions")
